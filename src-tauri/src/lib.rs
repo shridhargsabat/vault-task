@@ -100,6 +100,8 @@ pub fn run() {
             commands::export_encrypted_backup,
             commands::import_encrypted_backup,
             commands::export_decrypted_markdown,
+            commands::enable_keyring_unlock,
+            commands::unlock_with_keyring,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
