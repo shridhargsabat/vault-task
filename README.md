@@ -3,6 +3,18 @@
 Tauri v2 (Rust + React 18 + TypeScript + Tailwind + Zustand) desktop app for
 Windows 11, Ubuntu 24.04+, and Fedora 41+.
 
+## Phase 6 — Encrypted backup + Markdown export ✅
+
+- Signed `.vault` bundles (salt, verifier, all encrypted rows, SHA-256
+  checksum — never any plaintext); restore verifies checksum + backup
+  password, then atomically replaces the local vault and locks
+- `export_decrypted_markdown` (unlocked only): one `.md` per task with
+  YAML frontmatter + subtask checkboxes + note body
+- Backup & Data section in Security settings (native file dialogs);
+  `cargo test` 25 green · typecheck 0 · `vite build` 0 · deny clean
+- Headless E2E: modal renders all three actions; export/import/markdown
+  proven through the real IPC command layer with real files
+
 ## Phase 5 — Packaging + autostart + single-instance ✅
 
 - `tauri-plugin-autostart` (Windows `HKCU\...\Run` + Linux

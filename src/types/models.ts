@@ -60,3 +60,17 @@ export interface UpdateTaskInput {
   tags?: string[];
   due_date?: string | null;
 }
+
+export interface BackupStats {
+  task_count: number;
+  file_bytes: number;
+}
+
+export interface ImportStats {
+  task_count: number;
+}
+
+export interface BackupResult {
+  ok: boolean;
+  text: string;
+}

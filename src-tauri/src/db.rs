@@ -4,11 +4,13 @@
 //! ciphertext blobs; index columns (`status`, `priority`, `due_date`, …)
 //! stay plaintext for fast sorting after unlock.
 
+use base64::{Engine as _, engine::general_purpose::STANDARD as B64};
 use chrono::Utc;
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
-use crate::crypto::{MasterKey, VERIFIER_PLAINTEXT, decrypt_bytes, encrypt_bytes};
+use crate::crypto::{MasterKey, VERIFIER_PLAINTEXT, decrypt_bytes, derive_key, encrypt_bytes};
 
 // ---------------------------------------------------------------------------
 // Schema
@@ -642,6 +644,335 @@ pub fn rekey_vault(
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// Encrypted backup (.vault) + Markdown export
+// ---------------------------------------------------------------------------
+//
+// A `.vault` file is a signed JSON bundle: vault_meta (salt, verifier,
+// settings) plus every task row's ciphertext + nonces + plaintext metadata.
+// Integrity comes from a SHA-256 checksum over the canonical payload JSON.
+// Plaintext NEVER touches the backup — restore proves the backup's own
+// password against its salt+verifier before the atomic replace.
+
+/// Bump when the on-disk bundle shape changes; restores reject mismatches.
+pub const BACKUP_FORMAT_VERSION: u32 = 1;
+/// Refuse to even read backup files larger than this (DoS guard).
+pub const MAX_BACKUP_BYTES: u64 = 256 * 1024 * 1024;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BackupMeta {
+    pub kdf_salt_b64: String,
+    pub verifier_nonce_b64: String,
+    pub verifier_ciphertext_b64: String,
+    pub auto_lock_seconds: u64,
+    pub lock_on_tray_hide: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BackupTaskRow {
+    pub id: String,
+    pub encrypted_title_b64: String,
+    pub title_nonce_b64: String,
+    pub encrypted_note_b64: String,
+    pub note_nonce_b64: String,
+    pub encrypted_subtasks_b64: String,
+    pub subtasks_nonce_b64: String,
+    pub status: String,
+    pub priority: i32,
+    pub is_pinned: bool,
+    pub folder_id: Option<String>,
+    pub tags_json: String,
+    pub due_date: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BackupPayload {
+    pub format_version: u32,
+    pub meta: BackupMeta,
+    pub tasks: Vec<BackupTaskRow>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BackupBundle {
+    pub payload: BackupPayload,
+    /// Lowercase hex SHA-256 over the canonical JSON of `payload`.
+    pub sha256_hex: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct BackupStats {
+    pub task_count: usize,
+    pub file_bytes: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ImportStats {
+    pub task_count: usize,
+}
+
+/// A backup row with its 6 base64 blobs decoded: (row, enc_title,
+/// title_nonce, enc_note, note_nonce, enc_subtasks, subtasks_nonce).
+type DecodedBackupRow = (
+    BackupTaskRow,
+    Vec<u8>,
+    Vec<u8>,
+    Vec<u8>,
+    Vec<u8>,
+    Vec<u8>,
+    Vec<u8>,
+);
+
+fn b64e(bytes: &[u8]) -> String {
+    B64.encode(bytes)
+}
+
+fn b64d(what: &str, s: &str) -> Result<Vec<u8>, String> {
+    B64.decode(s)
+        .map_err(|_| format!("backup is corrupted: invalid base64 in {what}"))
+}
+
+/// Collect vault_meta + raw encrypted task rows. No decryption happens —
+/// the bundle carries ciphertext only.
+pub fn build_backup_payload(conn: &Connection) -> Result<BackupPayload, String> {
+    let meta = get_vault_meta(conn)?.ok_or_else(|| "vault is not initialized".to_string())?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, encrypted_title, title_nonce, encrypted_note, note_nonce, encrypted_subtasks, subtasks_nonce, status, priority, is_pinned, folder_id, tags_json, due_date, created_at, updated_at FROM tasks ORDER BY updated_at",
+        )
+        .map_err(|e| format!("db prepare backup scan: {e}"))?;
+    let rows = stmt
+        .query_map([], |r| {
+            let pinned: i64 = r.get(9)?;
+            Ok(BackupTaskRow {
+                id: r.get(0)?,
+                encrypted_title_b64: b64e(&r.get::<_, Vec<u8>>(1)?),
+                title_nonce_b64: b64e(&r.get::<_, Vec<u8>>(2)?),
+                encrypted_note_b64: b64e(&r.get::<_, Vec<u8>>(3)?),
+                note_nonce_b64: b64e(&r.get::<_, Vec<u8>>(4)?),
+                encrypted_subtasks_b64: b64e(&r.get::<_, Vec<u8>>(5)?),
+                subtasks_nonce_b64: b64e(&r.get::<_, Vec<u8>>(6)?),
+                status: r.get(7)?,
+                priority: r.get(8)?,
+                is_pinned: pinned != 0,
+                folder_id: r.get(10)?,
+                tags_json: r.get(11)?,
+                due_date: r.get(12)?,
+                created_at: r.get(13)?,
+                updated_at: r.get(14)?,
+            })
+        })
+        .map_err(|e| format!("db scan backup rows: {e}"))?;
+    let mut tasks = Vec::new();
+    for row in rows {
+        tasks.push(row.map_err(|e| format!("db read backup row: {e}"))?);
+    }
+    Ok(BackupPayload {
+        format_version: BACKUP_FORMAT_VERSION,
+        meta: BackupMeta {
+            kdf_salt_b64: b64e(&meta.kdf_salt),
+            verifier_nonce_b64: b64e(&meta.verifier_nonce),
+            verifier_ciphertext_b64: b64e(&meta.verifier_ciphertext),
+            auto_lock_seconds: meta.auto_lock_seconds,
+            lock_on_tray_hide: meta.lock_on_tray_hide,
+        },
+        tasks,
+    })
+}
+
+/// Canonical payload JSON (struct field order is deterministic) + checksum.
+pub fn seal_backup_bundle(payload: &BackupPayload) -> Result<BackupBundle, String> {
+    let canonical = serde_json::to_string(payload).map_err(|e| format!("backup serialize: {e}"))?;
+    let sha256_hex = format!("{:x}", Sha256::digest(canonical.as_bytes()));
+    Ok(BackupBundle {
+        payload: payload.clone(),
+        sha256_hex,
+    })
+}
+
+pub fn serialize_bundle(bundle: &BackupBundle) -> Result<String, String> {
+    serde_json::to_string_pretty(bundle).map_err(|e| format!("backup serialize: {e}"))
+}
+
+/// Parse + verify checksum. Any tampering with the payload fails here.
+pub fn parse_backup_bundle(text: &str) -> Result<BackupPayload, String> {
+    let bundle: BackupBundle =
+        serde_json::from_str(text).map_err(|_| "not a valid .vault backup file".to_string())?;
+    if bundle.payload.format_version != BACKUP_FORMAT_VERSION {
+        return Err(format!(
+            "unsupported backup version {} (expected {})",
+            bundle.payload.format_version, BACKUP_FORMAT_VERSION
+        ));
+    }
+    let canonical = serde_json::to_string(&bundle.payload)
+        .map_err(|_| "backup payload is malformed".to_string())?;
+    let recomputed = format!("{:x}", Sha256::digest(canonical.as_bytes()));
+    if recomputed != bundle.sha256_hex {
+        return Err("backup checksum mismatch: file is corrupted or tampered".to_string());
+    }
+    Ok(bundle.payload)
+}
+
+/// Prove `password` against the backup's own salt+verifier. Returns the
+/// derived key (for callers that need it) — wrong passwords fail closed.
+pub fn verify_backup_password(payload: &BackupPayload, password: &str) -> Result<[u8; 32], String> {
+    let salt = b64d("kdf_salt", &payload.meta.kdf_salt_b64)?;
+    let key = derive_key(password, &salt)?;
+    let nonce_bytes = b64d("verifier_nonce", &payload.meta.verifier_nonce_b64)?;
+    let ct = b64d("verifier_ciphertext", &payload.meta.verifier_ciphertext_b64)?;
+    let nonce = nonce_from_slice(&nonce_bytes)?;
+    let plain =
+        decrypt_bytes(&key, &ct, &nonce).map_err(|_| "incorrect backup password".to_string())?;
+    if plain.as_slice() != VERIFIER_PLAINTEXT {
+        return Err("incorrect backup password".to_string());
+    }
+    Ok(key)
+}
+
+/// Atomically replace the local vault content with the backup (single txn).
+/// Caller must hold no open statement on `conn`.
+pub fn restore_backup_payload(
+    conn: &mut Connection,
+    payload: &BackupPayload,
+) -> Result<usize, String> {
+    let salt = b64d("kdf_salt", &payload.meta.kdf_salt_b64)?;
+    let verifier_nonce = b64d("verifier_nonce", &payload.meta.verifier_nonce_b64)?;
+    let verifier_ct = b64d("verifier_ciphertext", &payload.meta.verifier_ciphertext_b64)?;
+    // Decode every row BEFORE opening the write txn so a corrupt bundle
+    // can never leave a half-replaced vault.
+    let mut decoded: Vec<DecodedBackupRow> = Vec::with_capacity(payload.tasks.len());
+    for t in &payload.tasks {
+        decoded.push((
+            t.clone(),
+            b64d("encrypted_title", &t.encrypted_title_b64)?,
+            b64d("title_nonce", &t.title_nonce_b64)?,
+            b64d("encrypted_note", &t.encrypted_note_b64)?,
+            b64d("note_nonce", &t.note_nonce_b64)?,
+            b64d("encrypted_subtasks", &t.encrypted_subtasks_b64)?,
+            b64d("subtasks_nonce", &t.subtasks_nonce_b64)?,
+        ));
+    }
+    let tx = conn
+        .transaction()
+        .map_err(|e| format!("db restore begin: {e}"))?;
+    tx.execute("DELETE FROM tasks", [])
+        .map_err(|e| format!("db restore clear tasks: {e}"))?;
+    tx.execute("DELETE FROM vault_meta", [])
+        .map_err(|e| format!("db restore clear meta: {e}"))?;
+    tx.execute(
+        "INSERT INTO vault_meta (id, kdf_salt, verifier_nonce, verifier_ciphertext, auto_lock_seconds, lock_on_tray_hide, created_at) VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6)",
+        params![
+            salt,
+            verifier_nonce,
+            verifier_ct,
+            payload.meta.auto_lock_seconds as i64,
+            i64::from(payload.meta.lock_on_tray_hide),
+            Utc::now().to_rfc3339(),
+        ],
+    )
+    .map_err(|e| format!("db restore meta: {e}"))?;
+    {
+        let mut stmt = tx
+            .prepare(
+                "INSERT INTO tasks (id, encrypted_title, title_nonce, encrypted_note, note_nonce, encrypted_subtasks, subtasks_nonce, status, priority, is_pinned, folder_id, tags_json, due_date, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+            )
+            .map_err(|e| format!("db restore prepare: {e}"))?;
+        for (t, enc_title, title_nonce, enc_note, note_nonce, enc_sub, sub_nonce) in &decoded {
+            stmt.execute(params![
+                t.id,
+                enc_title,
+                title_nonce,
+                enc_note,
+                note_nonce,
+                enc_sub,
+                sub_nonce,
+                t.status,
+                t.priority,
+                i64::from(t.is_pinned),
+                t.folder_id,
+                t.tags_json,
+                t.due_date,
+                t.created_at,
+                t.updated_at,
+            ])
+            .map_err(|e| format!("db restore task: {e}"))?;
+        }
+    }
+    tx.commit().map_err(|e| format!("db restore commit: {e}"))?;
+    Ok(decoded.len())
+}
+
+/// Render one decrypted task as Markdown with YAML frontmatter.
+pub fn render_task_markdown(task: &Task) -> String {
+    let mut out = String::new();
+    out.push_str("---\n");
+    out.push_str(&format!("status: {}\n", task.status));
+    out.push_str(&format!("priority: {}\n", task.priority));
+    match &task.due_date {
+        Some(d) => out.push_str(&format!("due_date: {d}\n")),
+        None => out.push_str("due_date: null\n"),
+    }
+    let tags = serde_json::to_string(&task.tags).unwrap_or_else(|_| "[]".to_string());
+    out.push_str(&format!("tags: {tags}\n"));
+    out.push_str("---\n\n");
+    out.push_str(&format!("# {}\n\n", task.title));
+    if !task.subtasks.is_empty() {
+        for s in &task.subtasks {
+            let mark = if s.done { "x" } else { " " };
+            out.push_str(&format!("- [{mark}] {}\n", s.title));
+        }
+        out.push('\n');
+    }
+    out.push_str(&task.note_markdown);
+    if !task.note_markdown.ends_with('\n') {
+        out.push('\n');
+    }
+    out
+}
+
+/// Filesystem-safe name: slugified title + id fragment (collision-proof).
+pub fn slugify_filename(title: &str, id: &str) -> String {
+    let mut slug: String = title
+        .to_lowercase()
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c
+            } else if c.is_whitespace() || c == '-' || c == '_' {
+                '-'
+            } else {
+                '\0'
+            }
+        })
+        .filter(|&c| c != '\0')
+        .collect();
+    while slug.contains("--") {
+        slug = slug.replace("--", "-");
+    }
+    let slug = slug.trim_matches('-');
+    let slug = if slug.is_empty() {
+        "task".to_string()
+    } else {
+        slug.chars()
+            .take(60)
+            .collect::<String>()
+            .trim_matches('-')
+            .to_string()
+    };
+    let slug = if slug.is_empty() {
+        "task".to_string()
+    } else {
+        slug
+    };
+    let frag: String = id
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .take(8)
+        .collect();
+    format!("{slug}-{frag}.md")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -776,5 +1107,177 @@ mod tests {
         let listed = list_tasks(&conn, &master).unwrap();
         assert_eq!(listed[0].due_date.as_deref(), Some("2026-11-05"));
         assert_eq!(listed[0].priority, 3);
+    }
+
+    fn backup_fixture() -> (Connection, MasterKey) {
+        let conn = mem_db();
+        let salt = [21u8; 16];
+        let key = derive_key("backup-fixture-pw", &salt).unwrap();
+        let (ct, nonce) = encrypt_bytes(&key, VERIFIER_PLAINTEXT).unwrap();
+        insert_vault_meta(&conn, &salt, &nonce, &ct, 600, true).unwrap();
+        (conn, MasterKey(key))
+    }
+
+    #[test]
+    fn backup_creation_carries_ciphertext_only() {
+        let (conn, master) = backup_fixture();
+        create_task(
+            &conn,
+            &master,
+            CreateTaskInput {
+                title: "Ultrasecret title".to_string(),
+                note_markdown: Some("ultrasecret-note-body".to_string()),
+                status: None,
+                priority: None,
+                folder_id: None,
+                tags: None,
+                due_date: None,
+            },
+        )
+        .unwrap();
+        let payload = build_backup_payload(&conn).unwrap();
+        assert_eq!(payload.tasks.len(), 1);
+        assert_eq!(payload.meta.auto_lock_seconds, 600);
+        assert!(payload.meta.lock_on_tray_hide);
+        let bundle = seal_backup_bundle(&payload).unwrap();
+        let text = serialize_bundle(&bundle).unwrap();
+        assert!(text.contains("sha256_hex"));
+        assert!(!text.contains("Ultrasecret title"));
+        assert!(!text.contains("ultrasecret-note-body"));
+        // And it parses back cleanly.
+        let parsed = parse_backup_bundle(&text).unwrap();
+        assert_eq!(parsed.tasks.len(), 1);
+    }
+
+    #[test]
+    fn backup_rejects_tampered_payload() {
+        let (conn, master) = backup_fixture();
+        create_task(
+            &conn,
+            &master,
+            CreateTaskInput {
+                title: "tamper probe".to_string(),
+                note_markdown: None,
+                status: Some("todo".to_string()),
+                priority: None,
+                folder_id: None,
+                tags: None,
+                due_date: None,
+            },
+        )
+        .unwrap();
+        let payload = build_backup_payload(&conn).unwrap();
+        let text = serialize_bundle(&seal_backup_bundle(&payload).unwrap()).unwrap();
+        // Flip a status value without touching the checksum.
+        let tampered = text.replacen("\"status\": \"todo\"", "\"status\": \"done\"", 1);
+        assert_ne!(tampered, text);
+        let err = parse_backup_bundle(&tampered).unwrap_err();
+        assert!(err.contains("checksum mismatch"), "got: {err}");
+    }
+
+    #[test]
+    fn backup_rejects_wrong_password() {
+        let (conn, master) = backup_fixture();
+        create_task(
+            &conn,
+            &master,
+            CreateTaskInput {
+                title: "pw probe".to_string(),
+                note_markdown: None,
+                status: None,
+                priority: None,
+                folder_id: None,
+                tags: None,
+                due_date: None,
+            },
+        )
+        .unwrap();
+        let payload = build_backup_payload(&conn).unwrap();
+        let bundle = seal_backup_bundle(&payload).unwrap();
+        let parsed = parse_backup_bundle(&serialize_bundle(&bundle).unwrap()).unwrap();
+        let err = verify_backup_password(&parsed, "wrong-password").unwrap_err();
+        assert!(err.contains("incorrect backup password"), "got: {err}");
+        verify_backup_password(&parsed, "backup-fixture-pw").unwrap();
+    }
+
+    #[test]
+    fn backup_roundtrip_is_lossless() {
+        let (conn_a, master) = backup_fixture();
+        for (title, status, priority) in
+            [("alpha task", "todo", 1), ("beta task", "in_progress", 4)]
+        {
+            create_task(
+                &conn_a,
+                &master,
+                CreateTaskInput {
+                    title: title.to_string(),
+                    note_markdown: Some(format!("# {title}\nbody")),
+                    status: Some(status.to_string()),
+                    priority: Some(priority),
+                    folder_id: Some("work".to_string()),
+                    tags: Some(vec!["k".to_string()]),
+                    due_date: Some("2026-12-31".to_string()),
+                },
+            )
+            .unwrap();
+        }
+        let payload = build_backup_payload(&conn_a).unwrap();
+        let text = serialize_bundle(&seal_backup_bundle(&payload).unwrap()).unwrap();
+        let parsed = parse_backup_bundle(&text).unwrap();
+        verify_backup_password(&parsed, "backup-fixture-pw").unwrap();
+
+        let mut conn_b = mem_db();
+        let restored = restore_backup_payload(&mut conn_b, &parsed).unwrap();
+        assert_eq!(restored, 2);
+
+        let meta_b = get_vault_meta(&conn_b).unwrap().unwrap();
+        assert_eq!(meta_b.auto_lock_seconds, 600);
+        assert!(meta_b.lock_on_tray_hide);
+        let before = serde_json::to_value(list_tasks(&conn_a, &master).unwrap()).unwrap();
+        let after = serde_json::to_value(list_tasks(&conn_b, &master).unwrap()).unwrap();
+        assert_eq!(before, after);
+    }
+
+    #[test]
+    fn markdown_render_and_slug() {
+        let task = Task {
+            id: "abc-123-def".to_string(),
+            title: "Hello, World!".to_string(),
+            note_markdown: "line one\nline two".to_string(),
+            subtasks: vec![
+                Subtask {
+                    id: "s1".to_string(),
+                    title: "done thing".to_string(),
+                    done: true,
+                },
+                Subtask {
+                    id: "s2".to_string(),
+                    title: "open thing".to_string(),
+                    done: false,
+                },
+            ],
+            status: "in_progress".to_string(),
+            priority: 3,
+            is_pinned: false,
+            folder_id: "inbox".to_string(),
+            tags: vec!["a".to_string(), "b".to_string()],
+            due_date: Some("2026-12-01".to_string()),
+            created_at: "2026-11-04T00:00:00Z".to_string(),
+            updated_at: "2026-11-04T00:00:00Z".to_string(),
+        };
+        let md = render_task_markdown(&task);
+        assert!(md.contains("status: in_progress"));
+        assert!(md.contains("priority: 3"));
+        assert!(md.contains("due_date: 2026-12-01"));
+        assert!(md.contains("tags: [\"a\",\"b\"]"));
+        assert!(md.contains("# Hello, World!"));
+        assert!(md.contains("- [x] done thing"));
+        assert!(md.contains("- [ ] open thing"));
+        assert!(md.contains("line one\nline two\n"));
+        assert_eq!(
+            slugify_filename(&task.title, &task.id),
+            "hello-world-abc123de.md"
+        );
+        assert_eq!(slugify_filename("!!!", "id"), "task-id.md");
     }
 }
