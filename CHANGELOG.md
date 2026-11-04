@@ -34,13 +34,13 @@ All notable changes to VaultTask are documented here. The format follows
   `rpm -qpR` dependency check); publish attaches all five installers
   plus `SHA256SUMS.txt` with unmatched-files failure enabled
 
-### Fixed — Phase 8: Windows comctl32 v6 manifest
+### Fixed — Phase 8: Windows test-harness comctl32 crash
 
-- Windows binaries now embed an SxS manifest for Common Controls 6:
-  rfd imports `TaskDialogIndirect` (v6-only), and without the manifest
-  the loader binds comctl32 v5 so every exe died at startup with
-  `STATUS_ENTRYPOINT_NOT_FOUND` — latent in the v0.1.0 installers,
-  caught by the new Windows CI job
+- The dialog plugin (rfd) imports `TaskDialogIndirect` (comctl32
+  v6-only). App binaries carry tauri-build's SxS manifest, but the
+  unit-test harness does not — so Windows test exes died at startup
+  with `STATUS_ENTRYPOINT_NOT_FOUND`. Tests never touch dialogs, so
+  the plugin now ships in prod builds only (`#[cfg(not(test))]`)
 
 ## [0.1.0] - 2026-11-04
 
