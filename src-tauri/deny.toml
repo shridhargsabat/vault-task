@@ -3,6 +3,18 @@
 
 [advisories]
 # Defaults: fail on vulnerabilities/yanked via the RustSec advisory DB.
+# The ignores below are all "unmaintained" (not vulnerable) with no safe
+# upgrade available:
+# - proc-macro-error arrives via glib-macros -> gtk (gtk-rs tree pinned by
+#   Tauri's tray-icon dependency).
+# - zvariant / zbus_names / zvariant_derive are the zbus 5 wire-format
+#   crates, unmaintained as standalones since zbus 6; Tauri 2.x pins zbus 5.
+ignore = [
+    "RUSTSEC-2024-0370",
+    "RUSTSEC-2026-0370",
+    "RUSTSEC-2026-0371",
+    "RUSTSEC-2026-0372",
+]
 
 [licenses]
 # Dependencies must be permissive / weak-copyleft only — no GPL/AGPL/SSPL.
