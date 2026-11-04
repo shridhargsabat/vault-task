@@ -181,6 +181,7 @@ pub fn hide_main_window<R: Runtime>(app: &AppHandle<R>) {
         .map(|s| s.lock_on_tray_hide && !s.is_locked())
         .unwrap_or(false);
     if should_lock {
+        eprintln!("[vault-task] window hidden with lock-on-tray-hide; locking vault");
         lock_session_and_emit(app);
     }
 }

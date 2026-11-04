@@ -16,7 +16,8 @@ Windows 11, Ubuntu 24.04+, and Fedora 41+.
   `SecuritySettingsModal` (30s–1h presets, hide-toggle, rekey)
 - `cargo test` 19 green (watchdog ticks, rekey IPC flow) · typecheck 0
 - Headless E2E: Ctrl+L, wrong-PIN banner, 30s watchdog lock, fake
-  ScreenSaver-service D-Bus lock, passphrase change + old-dead/new-works
+  ScreenSaver-service D-Bus lock, passphrase change + old-dead/new-works,
+  lock-on-tray-hide (X button → unmapped + session lock)
 
 ## Phase 3 — List + side pane UI ✅
 
