@@ -5,7 +5,7 @@
 
 use rusqlite::Connection;
 use serde::Serialize;
-use tauri::State;
+use tauri::{AppHandle, Manager, State};
 
 use crate::{
     crypto::{MasterKey, VERIFIER_PLAINTEXT, decrypt_bytes, derive_key, encrypt_bytes, generate_salt},
@@ -14,6 +14,7 @@ use crate::{
         insert_vault_meta, update_vault_settings,
     },
     state::{AppState, DEFAULT_AUTO_LOCK_SECONDS},
+    tray,
 };
 
 #[derive(Debug, Serialize)]
@@ -261,4 +262,65 @@ pub fn delete_task(state: State<AppState>, id: String) -> Result<bool, String> {
     require_master(&state)?;
     let conn = open_db(&state)?;
     db::delete_task(&conn, &id)
+}
+
+// ---------------------------------------------------------------------------
+// Window manager commands (Phase 2)
+// ---------------------------------------------------------------------------
+
+fn main_window(app: &AppHandle) -> Result<tauri::WebviewWindow, String> {
+    app.get_webview_window("main")
+        .ok_or_else(|| "main window not found".to_string())
+}
+
+/// Switch to `popover` (420x620 tray flyout) or `maximized` (workspace).
+/// Returns the new mode.
+#[tauri::command]
+pub fn set_window_mode(app: AppHandle, mode: String) -> Result<String, String> {
+    let window = main_window(&app)?;
+    match mode.as_str() {
+        "popover" => tray::show_popover(&app, &window)?,
+        "maximized" => tray::show_maximized(&app, &window)?,
+        other => return Err(format!("invalid window mode '{other}': expected popover|maximized")),
+    }
+    Ok(mode)
+}
+
+/// Toggle between popover and maximized. Returns the new mode.
+#[tauri::command]
+pub fn toggle_maximize_mode(app: AppHandle) -> Result<String, String> {
+    let current = app
+        .state::<AppState>()
+        .session
+        .lock()
+        .map(|s| s.window_mode.clone())
+        .unwrap_or_else(|_| "popover".to_string());
+    let next = if current == "maximized" { "popover" } else { "maximized" };
+    let window = main_window(&app)?;
+    if next == "maximized" {
+        tray::show_maximized(&app, &window)?;
+    } else {
+        tray::show_popover(&app, &window)?;
+    }
+    Ok(next.to_string())
+}
+
+/// Hide the window to the tray (close-to-tray button).
+#[tauri::command]
+pub fn hide_to_tray(app: AppHandle) -> Result<(), String> {
+    main_window(&app)?
+        .hide()
+        .map_err(|e| format!("hide window: {e}"))
+}
+
+/// Pin the popover so it does not auto-hide on focus loss.
+#[tauri::command]
+pub fn set_pinned(app: AppHandle, pinned: bool) -> Result<bool, String> {
+    let state = app.state::<AppState>();
+    let mut session = state
+        .session
+        .lock()
+        .map_err(|_| "session lock poisoned".to_string())?;
+    session.is_pinned = pinned;
+    Ok(pinned)
 }

@@ -20,9 +20,10 @@ pub struct VaultSession {
     pub last_activity: Instant,
     pub auto_lock_seconds: u64,
     pub lock_on_tray_hide: bool,
-    /// Used by Phase 2 window manager (popover vs maximized).
-    #[allow(dead_code)]
+    /// Window manager mode: "popover" | "maximized".
     pub window_mode: String,
+    /// When true, the popover does not auto-hide on focus loss.
+    pub is_pinned: bool,
 }
 
 impl Default for VaultSession {
@@ -33,6 +34,7 @@ impl Default for VaultSession {
             auto_lock_seconds: DEFAULT_AUTO_LOCK_SECONDS,
             lock_on_tray_hide: false,
             window_mode: "popover".to_string(),
+            is_pinned: false,
         }
     }
 }

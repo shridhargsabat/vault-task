@@ -3,6 +3,18 @@
 Tauri v2 (Rust + React 18 + TypeScript + Tailwind + Zustand) desktop app for
 Windows 11, Ubuntu 24.04+, and Fedora 41+.
 
+## Phase 2 — Tray + dual-mode window manager ✅
+
+- `src-tauri/src/tray.rs` — `TrayIconBuilder` (Open / Maximize / Lock / Quit),
+  OS-aware popover positioner (`TrayCenter` Windows, `TopRight` GNOME,
+  `BottomRight` KDE) + 12px work-area fallback, Ctrl+Shift+Space summon
+- Close-to-tray + focus-loss auto-hide (unless pinned) via `on_window_event`
+- IPC: `set_window_mode`, `toggle_maximize_mode`, `hide_to_tray`, `set_pinned`
+- `src/components/Titlebar/CustomTitlebar.tsx` + `src/hooks/useWindowMode.ts`
+- `cargo test` — 12 green (incl. anchor-math + shortcut-combo tests)
+- Headless E2E (Xvfb + openbox + xdotool): popover 420x620 renders,
+  maximize → 1280x800, restore → 420x620, hide-to-tray → process persists
+
 ## Phase 1 — Encrypted SQLite backend + auth state machine ✅
 
 - `src-tauri/src/crypto.rs` — Argon2id KDF + AES-256-GCM, zeroized `MasterKey`

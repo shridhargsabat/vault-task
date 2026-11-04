@@ -12,9 +12,18 @@
   "app": {
     "windows": [
       {
-        "title": "vault-task",
-        "width": 800,
-        "height": 600
+        "label": "main",
+        "title": "VaultTask",
+        "width": 420,
+        "height": 620,
+        "minWidth": 360,
+        "minHeight": 480,
+        "resizable": false,
+        "decorations": false,
+        "transparent": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "visible": true
       }
     ],
     "security": {

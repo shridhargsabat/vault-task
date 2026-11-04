@@ -2,14 +2,17 @@ mod commands;
 mod crypto;
 mod db;
 mod state;
+mod tray;
 
 use state::AppState;
-use tauri::Manager;
+use tauri::{Manager, WindowEvent};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_positioner::init())
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .setup(|app| {
             // %APPDATA%/com.vaulttask.app on Windows,
             // ~/.local/share/com.vaulttask.app on Ubuntu/Fedora.
@@ -19,7 +22,38 @@ pub fn run() {
                 .unwrap_or_else(|_| std::path::PathBuf::from("."));
             let db_path = data_dir.join("vault_task.db");
             app.manage(AppState::new(db_path));
+
+            // Persistent tray icon (graceful: Fedora GNOME without an
+            // appindicator extension simply runs without a tray host).
+            if let Err(e) = tray::create_tray(app.handle()) {
+                eprintln!("[vault-task] tray unavailable, continuing without it: {e}");
+            }
+            // Ctrl+Shift+Space summon (graceful: Wayland may deny it).
+            if let Err(e) = tray::register_toggle_shortcut(app.handle()) {
+                eprintln!("[vault-task] global shortcut unavailable: {e}");
+            }
             Ok(())
+        })
+        .on_window_event(|window, event| match event {
+            // Close button hides to tray instead of exiting (OneDrive-style).
+            WindowEvent::CloseRequested { api, .. } => {
+                api.prevent_close();
+                let _ = window.hide();
+            }
+            // Popover auto-hides on focus loss unless pinned.
+            WindowEvent::Focused(false) => {
+                let keep_open = window
+                    .app_handle()
+                    .state::<AppState>()
+                    .session
+                    .lock()
+                    .map(|s| s.is_pinned || s.window_mode != "popover")
+                    .unwrap_or(true);
+                if !keep_open {
+                    let _ = window.hide();
+                }
+            }
+            _ => {}
         })
         .invoke_handler(tauri::generate_handler![
             commands::get_vault_status,
@@ -32,6 +66,10 @@ pub fn run() {
             commands::create_task,
             commands::update_task,
             commands::delete_task,
+            commands::set_window_mode,
+            commands::toggle_maximize_mode,
+            commands::hide_to_tray,
+            commands::set_pinned,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

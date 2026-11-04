@@ -27,6 +27,8 @@ interface VaultState {
   setSelectedTaskId: (id: string | null) => void;
   setActiveFilter: (f: ActiveFilter) => void;
   setSearchQuery: (q: string) => void;
+  setWindowMode: (m: WindowMode) => void;
+  setPinnedState: (p: boolean) => void;
 }
 
 export const useVaultStore = create<VaultState>((set) => ({
@@ -123,4 +125,6 @@ export const useVaultStore = create<VaultState>((set) => ({
   setSelectedTaskId: (id) => set({ selectedTaskId: id }),
   setActiveFilter: (f) => set({ activeFilter: f }),
   setSearchQuery: (q) => set({ searchQuery: q }),
+  setWindowMode: (m) => set({ windowMode: m }),
+  setPinnedState: (p) => set({ isPinned: p }),
 }));
