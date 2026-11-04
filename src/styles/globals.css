@@ -1,0 +1,23 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* VaultTask Phase 1 baseline */
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  @apply bg-neutral-950 text-neutral-100 antialiased;
+}
+
+/* Smooth transitions for popover <-> maximized mode switches (Phase 2/3) */
+.vt-transition {
+  transition:
+    width 0.25s ease,
+    height 0.25s ease,
+    transform 0.25s ease,
+    opacity 0.2s ease;
+}
