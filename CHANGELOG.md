@@ -14,6 +14,17 @@ All notable changes to VaultTask are documented here. The format follows
   frontmatter (status, priority, due date, tags) plus subtasks and notes
 - Backup & Data section in Security settings with native file dialogs
 
+### Added — Phase 7: OS keyring quick-unlock
+
+- Optional quick-unlock via Windows Credential Manager / Linux Secret
+  Service (GNOME Keyring, KWallet): derived key stored in the OS
+  keyring, verified against the vault verifier, no passphrase typing
+- `keyring_enabled` vault flag with automatic migration for existing
+  databases; flag carried through encrypted backups
+- Settings toggle + Quick Unlock button (Ctrl+U) on the lock screen;
+  graceful fallback to PIN with a clear message when the keyring
+  daemon is locked or unavailable
+
 ## [0.1.0] - 2026-11-04
 
 First release: encrypted tray task manager with Markdown notes for

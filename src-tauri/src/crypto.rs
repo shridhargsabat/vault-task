@@ -81,6 +81,26 @@ pub fn decrypt_bytes(
         .map_err(|_| "decryption failed: wrong key or corrupted data".to_string())
 }
 
+/// Verify raw 32-byte key material against a stored verifier (the OS
+/// keyring quick-unlock path — no password derivation involved).
+pub fn verify_key_bytes(
+    key: &[u8; 32],
+    verifier_nonce: &[u8],
+    verifier_ciphertext: &[u8],
+) -> Result<(), String> {
+    if verifier_nonce.len() != 12 {
+        return Err("vault verifier is corrupted".to_string());
+    }
+    let mut nonce = [0u8; 12];
+    nonce.copy_from_slice(verifier_nonce);
+    let plain = decrypt_bytes(key, verifier_ciphertext, &nonce)
+        .map_err(|_| "stored OS keyring key is invalid (re-enable quick-unlock)".to_string())?;
+    if plain.as_slice() != VERIFIER_PLAINTEXT {
+        return Err("stored OS keyring key is invalid (re-enable quick-unlock)".to_string());
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -25,6 +25,7 @@ export function SecuritySettingsModal() {
   const exportBackup = useVaultStore((s) => s.exportBackup);
   const restoreBackup = useVaultStore((s) => s.restoreBackup);
   const exportMarkdown = useVaultStore((s) => s.exportMarkdown);
+  const enableKeyringUnlock = useVaultStore((s) => s.enableKeyringUnlock);
   const [saving, setSaving] = useState(false);
   const [savedTick, setSavedTick] = useState(0);
   const [currentPw, setCurrentPw] = useState("");
@@ -32,6 +33,7 @@ export function SecuritySettingsModal() {
   const [confirmPw, setConfirmPw] = useState("");
   const [pwBusy, setPwBusy] = useState(false);
   const [autostartBusy, setAutostartBusy] = useState(false);
+  const [keyringBusy, setKeyringBusy] = useState(false);
   const [pwMessage, setPwMessage] = useState<{ ok: boolean; text: string } | null>(null);
   const [backupBusy, setBackupBusy] = useState(false);
   const [backupMessage, setBackupMessage] = useState<BackupResult | null>(null);
@@ -96,6 +98,16 @@ export function SecuritySettingsModal() {
       await setAutostart(!autostartEnabled);
     } finally {
       setAutostartBusy(false);
+    }
+  };
+
+  const toggleKeyring = async () => {
+    setKeyringBusy(true);
+    try {
+      const ok = await enableKeyringUnlock(!status.keyring_enabled);
+      if (ok) setSavedTick((t) => t + 1);
+    } finally {
+      setKeyringBusy(false);
     }
   };
 
@@ -257,6 +269,30 @@ export function SecuritySettingsModal() {
             </button>
           </section>
         )}
+
+        <section className="border-t border-neutral-800 pt-3">
+          <button
+            disabled={keyringBusy}
+            onClick={() => void toggleKeyring()}
+            className="flex w-full items-center gap-2.5 rounded-lg bg-neutral-800 px-3 py-2 text-left text-xs disabled:opacity-50"
+          >
+            <span
+              className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${
+                status.keyring_enabled ? "bg-emerald-600" : "bg-neutral-700"
+              }`}
+            >
+              <span
+                className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all ${
+                  status.keyring_enabled ? "left-[18px]" : "left-0.5"
+                }`}
+              />
+            </span>
+            <span className="leading-snug text-neutral-200">
+              Enable OS Keyring Quick-Unlock (Windows Credential Manager /
+              Linux Secret Service)
+            </span>
+          </button>
+        </section>
 
         <section className="flex flex-col gap-1.5 border-t border-neutral-800 pt-3">
           <p className="text-xs font-medium text-neutral-300">

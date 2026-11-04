@@ -3,6 +3,20 @@
 Tauri v2 (Rust + React 18 + TypeScript + Tailwind + Zustand) desktop app for
 Windows 11, Ubuntu 24.04+, and Fedora 41+.
 
+## Phase 7 — OS keyring quick-unlock ✅
+
+- `keyring` crate (Windows Credential Manager / Secret Service via
+  D-Bus, pure-Rust bus crypto, vendored libdbus — no new system deps);
+  derived key stored base64 under `com.vaulttask.desktop` / `master_key`
+- `enable_keyring_unlock` + `unlock_with_keyring` IPC; `keyring_enabled`
+  flag in `vault_meta` with ALTER TABLE migration for v0.1 databases
+  (proven on a real upgraded DB) and carried through `.vault` backups
+- Settings toggle + Quick Unlock button (Ctrl+U) on the lock screen;
+  `cargo test` 32 green · clippy 0 · typecheck 0 · deny clean
+- Headless E2E: enable without a daemon fails gracefully (clear banner,
+  flag stays 0, no panic); flag-on shows the button; Ctrl+U with no
+  daemon falls back to PIN with a clear message; PIN unlock unaffected
+
 ## Phase 6 — Encrypted backup + Markdown export ✅
 
 - Signed `.vault` bundles (salt, verifier, all encrypted rows, SHA-256

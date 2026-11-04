@@ -32,6 +32,7 @@ export interface VaultStatus {
   locked: boolean;
   auto_lock_seconds: number;
   lock_on_tray_hide: boolean;
+  keyring_enabled: boolean;
 }
 
 export interface VaultConfig {

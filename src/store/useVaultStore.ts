@@ -52,6 +52,8 @@ interface VaultState {
   exportBackup: () => Promise<BackupResult | null>;
   restoreBackup: (sourcePath: string, password: string) => Promise<BackupResult>;
   exportMarkdown: () => Promise<BackupResult | null>;
+  enableKeyringUnlock: (enable: boolean) => Promise<boolean>;
+  unlockWithKeyring: () => Promise<void>;
 }
 
 /** Optimistic local merge of an update patch (mirrors backend semantics). */
@@ -318,6 +320,42 @@ export const useVaultStore = create<VaultState>((set, get) => ({
       return { ok: true, text: `Exported ${count} tasks as Markdown.` };
     } catch (e) {
       return { ok: false, text: String(e) };
+    }
+  },
+
+  enableKeyringUnlock: async (enable: boolean) => {
+    try {
+      await invoke("enable_keyring_unlock", { enable });
+      const status = await invoke<VaultStatus>("get_vault_status");
+      set({ status, error: null });
+      return true;
+    } catch (e) {
+      set({ error: String(e) });
+      return false;
+    }
+  },
+
+  unlockWithKeyring: async () => {
+    set({ loading: true, error: null });
+    try {
+      const ok = await invoke<boolean>("unlock_with_keyring");
+      if (!ok) {
+        set({
+          loading: false,
+          error: "No OS keyring credential saved — enter your PIN, or enable quick-unlock in Settings.",
+        });
+        return;
+      }
+      const status = await invoke<VaultStatus>("get_vault_status");
+      set({ status, loading: false });
+      try {
+        const tasks = await invoke<Task[]>("list_tasks");
+        set({ tasks });
+      } catch (e) {
+        set({ error: String(e) });
+      }
+    } catch (e) {
+      set({ loading: false, error: String(e) });
     }
   },
 

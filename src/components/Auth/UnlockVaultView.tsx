@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Lock, Unlock } from "lucide-react";
+import { KeyRound, Lock, Unlock } from "lucide-react";
 import { useVaultStore } from "../../store/useVaultStore";
 
 /**
@@ -8,6 +8,8 @@ import { useVaultStore } from "../../store/useVaultStore";
  */
 export function UnlockVaultView() {
   const unlockVault = useVaultStore((s) => s.unlockVault);
+  const unlockWithKeyring = useVaultStore((s) => s.unlockWithKeyring);
+  const status = useVaultStore((s) => s.status);
   const loading = useVaultStore((s) => s.loading);
   const error = useVaultStore((s) => s.error);
   const [password, setPassword] = useState("");
@@ -21,6 +23,17 @@ export function UnlockVaultView() {
     }
     prevError.current = error;
   }, [error]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "u") {
+        e.preventDefault();
+        void unlockWithKeyring();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [unlockWithKeyring]);
 
   const submit = () => {
     if (!password || loading) return;
@@ -42,6 +55,16 @@ export function UnlockVaultView() {
           Locked due to inactivity, tray hide, or system lock. Your key was
           wiped from memory.
         </p>
+        {status?.keyring_enabled && (
+          <button
+            onClick={() => void unlockWithKeyring()}
+            disabled={loading}
+            className="flex items-center justify-center gap-2 rounded-md bg-emerald-600 px-3 py-2 text-sm font-medium hover:bg-emerald-500 disabled:opacity-60"
+          >
+            <KeyRound className="h-4 w-4" />
+            {loading ? "Unlocking…" : "Quick Unlock with OS Keyring"}
+          </button>
+        )}
         <input
           autoFocus
           type="password"
@@ -62,7 +85,9 @@ export function UnlockVaultView() {
           {loading ? "Unlocking…" : "Unlock"}
         </button>
         <p className="text-[11px] text-neutral-600">
-          Tip: Ctrl+L locks instantly from anywhere in the app.
+          {status?.keyring_enabled
+            ? "Tip: Ctrl+U quick-unlocks via OS keyring · Ctrl+L locks instantly."
+            : "Tip: Ctrl+L locks instantly from anywhere in the app."}
         </p>
       </section>
     </main>
