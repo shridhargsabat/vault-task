@@ -12,7 +12,9 @@
 mod tests {
     use serde_json::json;
     use tauri::{
-        test::{INVOKE_KEY, MockRuntime, get_ipc_response, mock_builder, mock_context, noop_assets},
+        test::{
+            INVOKE_KEY, MockRuntime, get_ipc_response, mock_builder, mock_context, noop_assets,
+        },
         webview::InvokeRequest,
     };
 
@@ -68,13 +70,16 @@ mod tests {
             ])
             .build(mock_context(noop_assets()))
             .unwrap();
-        let webview =
-            tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
-                .build()
-                .unwrap();
+        let webview = tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
+            .build()
+            .unwrap();
 
         // 1. Setup unlocks the vault.
-        let status = call(&webview, "setup_vault", json!({"password": "test-ipc-1234"}));
+        let status = call(
+            &webview,
+            "setup_vault",
+            json!({"password": "test-ipc-1234"}),
+        );
         assert_eq!(status["initialized"], true);
         assert_eq!(status["locked"], false);
 
@@ -139,16 +144,11 @@ mod tests {
             ])
             .build(mock_context(noop_assets()))
             .unwrap();
-        let webview =
-            tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
-                .build()
-                .unwrap();
+        let webview = tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
+            .build()
+            .unwrap();
 
-        call(
-            &webview,
-            "setup_vault",
-            json!({"password": "old-pass-123"}),
-        );
+        call(&webview, "setup_vault", json!({"password": "old-pass-123"}));
         let created = call(
             &webview,
             "create_task",
@@ -186,7 +186,11 @@ mod tests {
             request("unlock_vault", json!({"password": "old-pass-123"})),
         );
         assert!(bad_login.is_err());
-        let ok_login = call(&webview, "unlock_vault", json!({"password": "new-pass-123"}));
+        let ok_login = call(
+            &webview,
+            "unlock_vault",
+            json!({"password": "new-pass-123"}),
+        );
         assert_eq!(ok_login["locked"], false);
 
         let _ = std::fs::remove_file(&db_path);

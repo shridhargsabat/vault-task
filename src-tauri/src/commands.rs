@@ -8,7 +8,9 @@ use serde::Serialize;
 use tauri::{AppHandle, Manager, State};
 
 use crate::{
-    crypto::{MasterKey, VERIFIER_PLAINTEXT, decrypt_bytes, derive_key, encrypt_bytes, generate_salt},
+    crypto::{
+        MasterKey, VERIFIER_PLAINTEXT, decrypt_bytes, derive_key, encrypt_bytes, generate_salt,
+    },
     db::{
         self, CreateTaskInput, Subtask, Task, UpdateTaskPatch, get_vault_meta, init_db,
         insert_vault_meta, update_vault_settings,
@@ -116,7 +118,8 @@ pub fn setup_vault(state: State<AppState>, password: String) -> Result<VaultStat
 pub fn unlock_vault(state: State<AppState>, password: String) -> Result<VaultStatus, String> {
     let conn = open_db(&state)?;
     let meta = get_vault_meta(&conn)?.ok_or_else(|| "vault is not initialized".to_string())?;
-    let key = derive_key(&password, &meta.kdf_salt).map_err(|_| "incorrect PIN/password".to_string())?;
+    let key =
+        derive_key(&password, &meta.kdf_salt).map_err(|_| "incorrect PIN/password".to_string())?;
     let mut nonce = [0u8; 12];
     if meta.verifier_nonce.len() != 12 {
         return Err("vault metadata is corrupted".to_string());
@@ -326,7 +329,11 @@ pub fn set_window_mode(app: AppHandle, mode: String) -> Result<String, String> {
     match mode.as_str() {
         "popover" => tray::show_popover(&app, &window)?,
         "maximized" => tray::show_maximized(&app, &window)?,
-        other => return Err(format!("invalid window mode '{other}': expected popover|maximized")),
+        other => {
+            return Err(format!(
+                "invalid window mode '{other}': expected popover|maximized"
+            ));
+        }
     }
     Ok(mode)
 }
@@ -340,7 +347,11 @@ pub fn toggle_maximize_mode(app: AppHandle) -> Result<String, String> {
         .lock()
         .map(|s| s.window_mode.clone())
         .unwrap_or_else(|_| "popover".to_string());
-    let next = if current == "maximized" { "popover" } else { "maximized" };
+    let next = if current == "maximized" {
+        "popover"
+    } else {
+        "maximized"
+    };
     let window = main_window(&app)?;
     if next == "maximized" {
         tray::show_maximized(&app, &window)?;

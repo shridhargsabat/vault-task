@@ -64,8 +64,33 @@ pub struct VaultMeta {
     pub lock_on_tray_hide: bool,
 }
 
+/// Raw `vault_meta` row: (kdf_salt, verifier_nonce, verifier_ciphertext,
+/// auto_lock_seconds, lock_on_tray_hide-as-int).
+type VaultMetaRow = (Vec<u8>, Vec<u8>, Vec<u8>, i64, i64);
+/// Raw full `tasks` row (id, 6 encrypted blobs + nonces, status, priority,
+/// is_pinned, folder_id, tags_json, due_date, created_at, updated_at).
+type TaskRow = (
+    String,
+    Vec<u8>,
+    Vec<u8>,
+    Vec<u8>,
+    Vec<u8>,
+    Vec<u8>,
+    Vec<u8>,
+    String,
+    i32,
+    i64,
+    Option<String>,
+    String,
+    Option<String>,
+    String,
+    String,
+);
+/// Raw rekey scan row: (id, 6 encrypted blobs + nonces).
+type RekeyRow = (String, Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>);
+
 pub fn get_vault_meta(conn: &Connection) -> Result<Option<VaultMeta>, String> {
-    let row: Option<(Vec<u8>, Vec<u8>, Vec<u8>, i64, i64)> = conn
+    let row: Option<VaultMetaRow> = conn
         .query_row(
             "SELECT kdf_salt, verifier_nonce, verifier_ciphertext, auto_lock_seconds, lock_on_tray_hide FROM vault_meta WHERE id = 1",
             [],
@@ -73,15 +98,17 @@ pub fn get_vault_meta(conn: &Connection) -> Result<Option<VaultMeta>, String> {
         )
         .optional()
         .map_err(|e| format!("db read vault_meta: {e}"))?;
-    Ok(row.map(|(kdf_salt, verifier_nonce, verifier_ciphertext, auto_lock_seconds, lock_on_tray_hide)| {
-        VaultMeta {
-            kdf_salt,
-            verifier_nonce,
-            verifier_ciphertext,
-            auto_lock_seconds: auto_lock_seconds.max(0) as u64,
-            lock_on_tray_hide: lock_on_tray_hide != 0,
-        }
-    }))
+    Ok(row.map(
+        |(kdf_salt, verifier_nonce, verifier_ciphertext, auto_lock_seconds, lock_on_tray_hide)| {
+            VaultMeta {
+                kdf_salt,
+                verifier_nonce,
+                verifier_ciphertext,
+                auto_lock_seconds: auto_lock_seconds.max(0) as u64,
+                lock_on_tray_hide: lock_on_tray_hide != 0,
+            }
+        },
+    ))
 }
 
 pub fn insert_vault_meta(
@@ -180,7 +207,9 @@ pub struct UpdateTaskPatch {
 fn validate_status(status: &str) -> Result<(), String> {
     match status {
         "todo" | "in_progress" | "done" => Ok(()),
-        other => Err(format!("invalid status '{other}': expected todo|in_progress|done")),
+        other => Err(format!(
+            "invalid status '{other}': expected todo|in_progress|done"
+        )),
     }
 }
 
@@ -226,8 +255,8 @@ fn decrypt_task_row(
     let title = String::from_utf8(title_bytes).map_err(|_| "corrupted title utf-8".to_string())?;
     let note_markdown =
         String::from_utf8(note_bytes).map_err(|_| "corrupted note utf-8".to_string())?;
-    let subtasks: Vec<Subtask> =
-        serde_json::from_slice(&subtasks_bytes).map_err(|_| "corrupted subtasks json".to_string())?;
+    let subtasks: Vec<Subtask> = serde_json::from_slice(&subtasks_bytes)
+        .map_err(|_| "corrupted subtasks json".to_string())?;
     let tags: Vec<String> = serde_json::from_str(&tags_json).unwrap_or_default();
     Ok(Task {
         id,
@@ -315,23 +344,7 @@ pub fn list_tasks(conn: &Connection, master: &MasterKey) -> Result<Vec<Task>, St
 }
 
 pub fn get_task(conn: &Connection, master: &MasterKey, id: &str) -> Result<Option<Task>, String> {
-    let row: Option<(
-        String,
-        Vec<u8>,
-        Vec<u8>,
-        Vec<u8>,
-        Vec<u8>,
-        Vec<u8>,
-        Vec<u8>,
-        String,
-        i32,
-        i64,
-        Option<String>,
-        String,
-        Option<String>,
-        String,
-        String,
-    )> = conn
+    let row: Option<TaskRow> = conn
         .query_row(
             "SELECT id, encrypted_title, title_nonce, encrypted_note, note_nonce, encrypted_subtasks, subtasks_nonce, status, priority, is_pinned, folder_id, tags_json, due_date, created_at, updated_at FROM tasks WHERE id = ?1",
             params![id],
@@ -407,8 +420,8 @@ pub fn create_task(
     let key = master.as_bytes();
     let (enc_title, title_nonce) = encrypt_bytes(key, title.as_bytes())?;
     let (enc_note, note_nonce) = encrypt_bytes(key, note.as_bytes())?;
-    let subtasks_json = serde_json::to_vec::<Vec<Subtask>>(&vec![])
-        .map_err(|e| format!("subtasks json: {e}"))?;
+    let subtasks_json =
+        serde_json::to_vec::<Vec<Subtask>>(&vec![]).map_err(|e| format!("subtasks json: {e}"))?;
     let (enc_subtasks, subtasks_nonce) = encrypt_bytes(key, &subtasks_json)?;
     let tags_json = serde_json::to_string(&tags).map_err(|e| format!("tags json: {e}"))?;
 
@@ -457,8 +470,7 @@ pub fn update_task(
     id: &str,
     patch: UpdateTaskPatch,
 ) -> Result<Task, String> {
-    let existing = get_task(conn, master, id)?
-        .ok_or_else(|| format!("task '{id}' not found"))?;
+    let existing = get_task(conn, master, id)?.ok_or_else(|| format!("task '{id}' not found"))?;
 
     let title = match patch.title {
         Some(t) => {
@@ -470,7 +482,9 @@ pub fn update_task(
         }
         None => existing.title.clone(),
     };
-    let note_markdown = patch.note_markdown.unwrap_or(existing.note_markdown.clone());
+    let note_markdown = patch
+        .note_markdown
+        .unwrap_or(existing.note_markdown.clone());
     let subtasks = patch.subtasks.unwrap_or(existing.subtasks.clone());
     let status = match patch.status {
         Some(s) => {
@@ -498,8 +512,7 @@ pub fn update_task(
     let key = master.as_bytes();
     let (enc_title, title_nonce) = encrypt_bytes(key, title.as_bytes())?;
     let (enc_note, note_nonce) = encrypt_bytes(key, note_markdown.as_bytes())?;
-    let subtasks_json =
-        serde_json::to_vec(&subtasks).map_err(|e| format!("subtasks json: {e}"))?;
+    let subtasks_json = serde_json::to_vec(&subtasks).map_err(|e| format!("subtasks json: {e}"))?;
     let (enc_subtasks, subtasks_nonce) = encrypt_bytes(key, &subtasks_json)?;
     let tags_json = serde_json::to_string(&tags).map_err(|e| format!("tags json: {e}"))?;
     let now = Utc::now().to_rfc3339();
@@ -559,15 +572,7 @@ pub fn rekey_vault(
 ) -> Result<(), String> {
     let old_key = old_master.as_bytes();
     // 1. Load raw rows.
-    let rows: Vec<(
-        String,
-        Vec<u8>,
-        Vec<u8>,
-        Vec<u8>,
-        Vec<u8>,
-        Vec<u8>,
-        Vec<u8>,
-    )> = {
+    let rows: Vec<RekeyRow> = {
         let mut stmt = conn
             .prepare("SELECT id, encrypted_title, title_nonce, encrypted_note, note_nonce, encrypted_subtasks, subtasks_nonce FROM tasks")
             .map_err(|e| format!("db prepare rekey: {e}"))?;

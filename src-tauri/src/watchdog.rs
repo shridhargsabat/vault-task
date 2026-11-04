@@ -141,8 +141,7 @@ mod tests {
         let mut s = state.session.lock().unwrap();
         s.unlock(MasterKey([7u8; 32]));
         s.auto_lock_seconds = 60;
-        s.last_activity =
-            std::time::Instant::now() - std::time::Duration::from_secs(idle_secs);
+        s.last_activity = std::time::Instant::now() - std::time::Duration::from_secs(idle_secs);
     }
 
     #[test]
@@ -162,8 +161,7 @@ mod tests {
         unlock_idle(&app, 5);
         assert!(!tick(app.handle()));
         assert!(
-            !app
-                .handle()
+            !app.handle()
                 .state::<AppState>()
                 .session
                 .lock()

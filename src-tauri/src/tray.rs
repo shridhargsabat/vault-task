@@ -103,7 +103,10 @@ fn record_mode<R: Runtime>(app: &AppHandle<R>, mode: &str) {
 }
 
 /// Enter popover mode: compact, frameless, always-on-top, no taskbar entry.
-pub fn show_popover<R: Runtime>(app: &AppHandle<R>, window: &WebviewWindow<R>) -> Result<(), String> {
+pub fn show_popover<R: Runtime>(
+    app: &AppHandle<R>,
+    window: &WebviewWindow<R>,
+) -> Result<(), String> {
     let _ = window.unmaximize();
     window
         .set_size(tauri::Size::Physical(PhysicalSize::new(
@@ -291,19 +294,16 @@ pub fn create_tray<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
 
 /// Ctrl+Shift+Space summons the popover even without a tray host.
 pub fn toggle_shortcut() -> Shortcut {
-    Shortcut::new(
-        Some(Modifiers::CONTROL | Modifiers::SHIFT),
-        Code::Space,
-    )
+    Shortcut::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::Space)
 }
 
 pub fn register_toggle_shortcut<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
     app.global_shortcut()
         .on_shortcut(toggle_shortcut(), |app, _shortcut, event| {
-            if event.state == ShortcutState::Pressed {
-                if let Some(w) = app.get_webview_window("main") {
-                    toggle_visibility(app, &w);
-                }
+            if event.state == ShortcutState::Pressed
+                && let Some(w) = app.get_webview_window("main")
+            {
+                toggle_visibility(app, &w);
             }
         })
         .map_err(|e| format!("register global shortcut: {e}"))

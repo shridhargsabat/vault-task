@@ -45,10 +45,10 @@ pub fn run() {
                 eprintln!("[vault-task] tray unavailable, continuing without it: {e}");
             }
             // Autostart launches (--minimized) boot straight to the tray.
-            if std::env::args().any(|a| a == "--minimized") {
-                if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.hide();
-                }
+            if std::env::args().any(|a| a == "--minimized")
+                && let Some(window) = app.get_webview_window("main")
+            {
+                let _ = window.hide();
             }
             // Ctrl+Shift+Space summon (graceful: Wayland may deny it).
             if let Err(e) = tray::register_toggle_shortcut(app.handle()) {

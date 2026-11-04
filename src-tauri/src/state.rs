@@ -3,11 +3,7 @@
 //! `Instant` is monotonic and never serialized — the frontend only sees
 //! the derived `locked` / `auto_lock_seconds` status.
 
-use std::{
-    path::PathBuf,
-    sync::Mutex,
-    time::Instant,
-};
+use std::{path::PathBuf, sync::Mutex, time::Instant};
 
 use crate::crypto::MasterKey;
 
