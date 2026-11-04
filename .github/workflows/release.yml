@@ -1,0 +1,99 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch: {}
+
+# Least privilege: only the publish job needs write, and only on tags.
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  preflight:
+    name: tag matches package versions
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: check versions
+        shell: bash
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          CARGO_VER=$(grep '^version = ' src-tauri/Cargo.toml | head -1 | cut -d'"' -f2)
+          TAURI_VER=$(grep '"version"' src-tauri/tauri.conf.json | head -1 | cut -d'"' -f4)
+          NPM_VER=$(grep '"version"' package.json | head -1 | cut -d'"' -f4)
+          echo "tag=$TAG cargo=$CARGO_VER tauri_conf=$TAURI_VER npm=$NPM_VER"
+          [ "v$CARGO_VER" = "$TAG" ] || { echo "tag does not match Cargo version"; exit 1; }
+          [ "v$TAURI_VER" = "$TAG" ] || { echo "tag does not match tauri.conf.json version"; exit 1; }
+          [ "v$NPM_VER" = "$TAG" ] || { echo "tag does not match package.json version"; exit 1; }
+
+  build:
+    name: bundle (${{ matrix.bundles }} on ${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # deb + rpm + AppImage are all produced by pure-Rust bundler
+          # code — no rpmbuild/appimagetool needed on the runner.
+          - os: ubuntu-22.04
+            bundles: deb appimage rpm
+          - os: windows-latest
+            bundles: msi nsis
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: system deps (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev
+      - name: NSIS + WiX (Windows)
+        if: runner.os == 'Windows'
+        run: choco install nsis wixtoolset -y
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: npm ci
+      - name: build bundles
+        shell: bash
+        run: npx tauri build --bundles ${{ matrix.bundles }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bundles-${{ runner.os }}
+          path: |
+            src-tauri/target/release/bundle/**/*.deb
+            src-tauri/target/release/bundle/**/*.rpm
+            src-tauri/target/release/bundle/**/*.AppImage
+            src-tauri/target/release/bundle/**/*.msi
+            src-tauri/target/release/bundle/**/*.exe
+          if-no-files-found: error
+
+  publish:
+    name: publish release
+    needs: [preflight, build]
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: bundles-*
+          merge-multiple: true
+      - name: list assets
+        shell: bash
+        run: ls -la artifacts/
+      - name: publish
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          generate_release_notes: true

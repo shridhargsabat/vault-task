@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Documentation
+    url: https://github.com/shridhargsabat/vault-task#readme
+    about: README with setup, per-OS build commands, and feature notes.
+  - name: Security vulnerability (private)
+    url: https://github.com/shridhargsabat/vault-task/security/advisories/new
+    about: Please report vulnerabilities privately, never as a public issue. See SECURITY.md.
