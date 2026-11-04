@@ -89,11 +89,18 @@ jobs:
           path: artifacts
           pattern: bundles-*
           merge-multiple: true
-      - name: list assets
+      # Bundles arrive in per-format subdirs (deb/, msi/, …) — flatten so
+      # the release glob matches files, not directories. (v0.1.0 shipped
+      # an empty asset list because `artifacts/*` matched only the dirs.)
+      - name: flatten assets
         shell: bash
-        run: ls -la artifacts/
+        run: |
+          find artifacts -mindepth 2 -type f -exec mv -t artifacts/ {} +
+          find artifacts -mindepth 1 -type d -empty -delete
+          ls -la artifacts/
       - name: publish
         uses: softprops/action-gh-release@v2
         with:
           files: artifacts/*
           generate_release_notes: true
+          fail_on_unmatched_files: true
