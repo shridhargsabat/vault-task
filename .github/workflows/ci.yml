@@ -64,18 +64,45 @@ jobs:
       - name: cargo test
         working-directory: src-tauri
         run: cargo test
-      # TEMPORARY: diagnose STATUS_ENTRYPOINT_NOT_FOUND (0xc0000139).
-      - name: diagnose missing imports
+      # TEMPORARY: find the exact missing import behind 0xc0000139.
+      - name: find missing imports
         if: failure()
-        shell: pwsh
+        shell: python
         run: |
-          Invoke-WebRequest -Uri https://github.com/lucasg/Dependencies/releases/download/v1.11.1/Dependencies_x64_Release.zip -OutFile deps.zip
-          Expand-Archive deps.zip -DestinationPath deps
-          $exe = Get-ChildItem src-tauri/target/debug/deps/vault_task_lib-*.exe | Select-Object -First 1
-          Write-Host "exe=$($exe.FullName)"
-          .\deps\Dependencies.exe -chain $exe.FullName
-          Write-Host "=== direct imports ==="
-          .\deps\Dependencies.exe -imports $exe.FullName | Select-String -Pattern '\(\!\)|Missing|Error' | Select-Object -First 40
+          import glob, os, subprocess, sys
+          subprocess.check_call(
+              [sys.executable, "-m", "pip", "install", "-q", "pefile"]
+          )
+          import pefile
+          exe = glob.glob(
+              "src-tauri/target/debug/deps/vault_task_lib-*.exe"
+          )[0]
+          print("exe:", exe)
+          pe = pefile.PE(exe)
+          sysdir = os.path.join(os.environ["SystemRoot"], "System32")
+          exports_cache = {}
+          total_missing = 0
+          for entry in pe.DIRECTORY_ENTRY_IMPORT:
+              dll = entry.dll.decode()
+              path = os.path.join(sysdir, dll)
+              if not os.path.exists(path):
+                  # Api-set virtual DLL (api-ms-*/ext-ms-*) or delay-load:
+                  # resolved by the loader, skip.
+                  continue
+              if dll not in exports_cache:
+                  dpe = pefile.PE(path)
+                  names = set()
+                  if hasattr(dpe, "DIRECTORY_ENTRY_EXPORT"):
+                      for sym in dpe.DIRECTORY_ENTRY_EXPORT.symbols:
+                          if sym.name:
+                              names.add(sym.name.decode())
+                  exports_cache[dll] = (names, dpe)
+              names, dpe = exports_cache[dll]
+              for imp in entry.imports:
+                  if imp.name and imp.name.decode() not in names:
+                      print(f"MISSING: {dll}!{imp.name.decode()}")
+                      total_missing += 1
+          print("total missing:", total_missing)
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
