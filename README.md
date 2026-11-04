@@ -3,6 +3,45 @@
 Tauri v2 (Rust + React 18 + TypeScript + Tailwind + Zustand) desktop app for
 Windows 11, Ubuntu 24.04+, and Fedora 41+.
 
+## Phase 5 — Packaging + autostart + single-instance ✅
+
+- `tauri-plugin-autostart` (Windows `HKCU\...\Run` + Linux
+  `~/.config/autostart/VaultTask.desktop` with `--minimized` so login boots
+  straight to the tray) with a Startup toggle in settings;
+  `tauri-plugin-single-instance` (second launch shows + focuses the
+  existing window, then exits)
+- Bundle targets: `msi`, `nsis`, `deb`, `rpm`, `appimage`; deb depends on
+  `libwebkit2gtk-4.1-0` + `libayatana-appindicator3-1`; rpm depends on
+  `webkit2gtk4.1` + `libappindicator-gtk3` and recommends
+  `gnome-shell-extension-appindicator`
+- `cargo test` 19 green · typecheck 0 · `vite build` 0 · release `.deb`
+  built clean
+- Headless E2E: 2nd instance exits (D-Bus name owned), `--minimized`
+  boots unmapped, autostart toggle creates/removes the `.desktop` entry
+
+### Build & dependencies per OS
+
+Prereqs everywhere: Rust stable via rustup + Node 20+.
+
+**Windows 11 / 10** (PowerShell):
+- `winget install Rustlang.Rustup OpenJS.NodeJS`
+- Visual Studio Build Tools with the C++ workload (rustup prompts if missing)
+- WebView2: preinstalled on Win11 / Win10 1803+
+- MSI: WiX Toolset 3.11+ (wixtoolset.org) · NSIS `.exe`:
+  `winget install NSIS.NSIS`
+- `npm run tauri build -- --bundles msi nsis`
+
+**Ubuntu 24.04+**:
+- `sudo apt install libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libssl-dev build-essential curl wget file`
+- `npm run tauri build -- --bundles deb appimage`
+- Running the AppImage needs FUSE at runtime (`sudo apt install libfuse2`)
+
+**Fedora 41+**:
+- `sudo dnf install webkit2gtk4.1-devel libappindicator-gtk3-devel librsvg2-devel openssl-devel @development-tools`
+- `npm run tauri build -- --bundles rpm appimage`
+- GNOME tray icons need the AppIndicator shell extension (the `.rpm`
+  recommends `gnome-shell-extension-appindicator`)
+
 ## Phase 4 — Auto-lock engine + lock screens ✅
 
 - `watchdog.rs`: 1s Tokio loop (idle > `auto_lock_seconds` → zeroize +

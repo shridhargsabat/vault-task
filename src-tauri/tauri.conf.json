@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "vault-task",
+  "productName": "VaultTask",
   "version": "0.1.0",
   "identifier": "com.vaulttask.app",
   "build": {
@@ -32,13 +32,25 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": ["msi", "nsis", "deb", "rpm", "appimage"],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "publisher": "VaultTask",
+    "category": "Utility",
+    "shortDescription": "Encrypted tray task manager with Markdown notes",
+    "linux": {
+      "deb": {
+        "depends": ["libwebkit2gtk-4.1-0", "libayatana-appindicator3-1"]
+      },
+      "rpm": {
+        "depends": ["webkit2gtk4.1", "libappindicator-gtk3"],
+        "recommends": ["gnome-shell-extension-appindicator"]
+      }
+    }
   }
 }

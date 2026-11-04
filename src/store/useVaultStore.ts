@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
+import { disable, enable, isEnabled } from "@tauri-apps/plugin-autostart";
 import type {
   ActiveFilter,
   CreateTaskInput,
@@ -41,6 +42,9 @@ interface VaultState {
     lockOnTrayHide: boolean,
   ) => Promise<boolean>;
   changePassword: (oldPassword: string, newPassword: string) => Promise<boolean>;
+  autostartEnabled: boolean | null;
+  refreshAutostart: () => Promise<void>;
+  setAutostart: (enabled: boolean) => Promise<void>;
 }
 
 /** Optimistic local merge of an update patch (mirrors backend semantics). */
@@ -70,6 +74,7 @@ export const useVaultStore = create<VaultState>((set, get) => ({
   windowMode: "popover",
   isPinned: false,
   isSettingsOpen: false,
+  autostartEnabled: null,
   loading: false,
   error: null,
 
@@ -230,6 +235,28 @@ export const useVaultStore = create<VaultState>((set, get) => ({
     } catch {
       // Modal shows its own inline message; keep the global banner quiet.
       return false;
+    }
+  },
+
+  refreshAutostart: async () => {
+    try {
+      set({ autostartEnabled: await isEnabled() });
+    } catch {
+      // Browser preview or unsupported platform: hide the toggle.
+      set({ autostartEnabled: null });
+    }
+  },
+
+  setAutostart: async (enabled: boolean) => {
+    try {
+      if (enabled) {
+        await enable();
+      } else {
+        await disable();
+      }
+      set({ autostartEnabled: enabled, error: null });
+    } catch (e) {
+      set({ error: String(e) });
     }
   },
 

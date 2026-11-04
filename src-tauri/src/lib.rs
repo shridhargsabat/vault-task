@@ -17,6 +17,18 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_positioner::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            // A second launch (Start Menu / App Grid) opens the existing
+            // tray window instead of spawning a duplicate process.
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }))
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            Some(vec!["--minimized"]),
+        ))
         .setup(|app| {
             // %APPDATA%/com.vaulttask.app on Windows,
             // ~/.local/share/com.vaulttask.app on Ubuntu/Fedora.
@@ -31,6 +43,12 @@ pub fn run() {
             // appindicator extension simply runs without a tray host).
             if let Err(e) = tray::create_tray(app.handle()) {
                 eprintln!("[vault-task] tray unavailable, continuing without it: {e}");
+            }
+            // Autostart launches (--minimized) boot straight to the tray.
+            if std::env::args().any(|a| a == "--minimized") {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.hide();
+                }
             }
             // Ctrl+Shift+Space summon (graceful: Wayland may deny it).
             if let Err(e) = tray::register_toggle_shortcut(app.handle()) {

@@ -17,23 +17,28 @@ export function SecuritySettingsModal() {
   const status = useVaultStore((s) => s.status);
   const updateSecuritySettings = useVaultStore((s) => s.updateSecuritySettings);
   const changePassword = useVaultStore((s) => s.changePassword);
+  const autostartEnabled = useVaultStore((s) => s.autostartEnabled);
+  const refreshAutostart = useVaultStore((s) => s.refreshAutostart);
+  const setAutostart = useVaultStore((s) => s.setAutostart);
   const [saving, setSaving] = useState(false);
   const [savedTick, setSavedTick] = useState(0);
   const [currentPw, setCurrentPw] = useState("");
   const [newPw, setNewPw] = useState("");
   const [confirmPw, setConfirmPw] = useState("");
   const [pwBusy, setPwBusy] = useState(false);
+  const [autostartBusy, setAutostartBusy] = useState(false);
   const [pwMessage, setPwMessage] = useState<{ ok: boolean; text: string } | null>(null);
 
   useEffect(() => {
     if (!isOpen) return;
     setPwMessage(null);
+    void refreshAutostart();
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") setOpen(false);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [isOpen, setOpen]);
+  }, [isOpen, setOpen, refreshAutostart]);
 
   if (!isOpen || !status) return null;
 
@@ -69,6 +74,16 @@ export function SecuritySettingsModal() {
       }
     } finally {
       setPwBusy(false);
+    }
+  };
+
+  const toggleAutostart = async () => {
+    if (autostartEnabled === null) return;
+    setAutostartBusy(true);
+    try {
+      await setAutostart(!autostartEnabled);
+    } finally {
+      setAutostartBusy(false);
     }
   };
 
@@ -152,6 +167,31 @@ export function SecuritySettingsModal() {
             </span>
           </button>
         </section>
+
+        {autostartEnabled !== null && (
+          <section className="border-t border-neutral-800 pt-3">
+            <button
+              disabled={autostartBusy}
+              onClick={() => void toggleAutostart()}
+              className="flex w-full items-center gap-2.5 rounded-lg bg-neutral-800 px-3 py-2 text-left text-xs disabled:opacity-50"
+            >
+              <span
+                className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${
+                  autostartEnabled ? "bg-emerald-600" : "bg-neutral-700"
+                }`}
+              >
+                <span
+                  className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all ${
+                    autostartEnabled ? "left-[18px]" : "left-0.5"
+                  }`}
+                />
+              </span>
+              <span className="text-neutral-200">
+                Launch in system tray on OS startup
+              </span>
+            </button>
+          </section>
+        )}
 
         <section className="flex flex-col gap-1.5 border-t border-neutral-800 pt-3">
           <p className="text-xs font-medium text-neutral-300">
