@@ -25,6 +25,15 @@ All notable changes to VaultTask are documented here. The format follows
   graceful fallback to PIN with a clear message when the keyring
   daemon is locked or unavailable
 
+### Changed — Phase 8: CI/CD to spec
+
+- CI on pinned `ubuntu-24.04` plus a new `windows-latest` test job
+  (`cargo test`, typecheck, Vite build); PRs targeting `main` only
+- Release pipeline split into `build-windows` (msi,nsis),
+  `build-ubuntu` (deb,appimage), and `build-fedora` (rpm with an
+  `rpm -qpR` dependency check); publish attaches all five installers
+  plus `SHA256SUMS.txt` with unmatched-files failure enabled
+
 ## [0.1.0] - 2026-11-04
 
 First release: encrypted tray task manager with Markdown notes for

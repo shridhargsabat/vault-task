@@ -16,7 +16,7 @@ jobs:
   preflight:
     name: tag matches package versions
     if: startsWith(github.ref, 'refs/tags/')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - name: check versions
@@ -32,33 +32,17 @@ jobs:
           [ "v$TAURI_VER" = "$TAG" ] || { echo "tag does not match tauri.conf.json version"; exit 1; }
           [ "v$NPM_VER" = "$TAG" ] || { echo "tag does not match package.json version"; exit 1; }
 
-  build:
-    name: bundle (${{ matrix.bundles }} on ${{ matrix.os }})
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          # deb + rpm + AppImage are all produced by pure-Rust bundler
-          # code — no rpmbuild/appimagetool needed on the runner.
-          - os: ubuntu-22.04
-            bundles: deb appimage rpm
-          - os: windows-latest
-            bundles: msi nsis
-    runs-on: ${{ matrix.os }}
+  build-windows:
+    name: bundle msi,nsis on windows
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - name: system deps (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev
-      - name: NSIS + WiX (Windows)
-        if: runner.os == 'Windows'
+      - name: NSIS + WiX
         run: choco install nsis wixtoolset -y
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version: "20"
           cache: npm
       - uses: Swatinem/rust-cache@v2
         with:
@@ -66,34 +50,108 @@ jobs:
       - run: npm ci
       - name: build bundles
         shell: bash
-        run: npx tauri build --bundles ${{ matrix.bundles }}
+        run: npx tauri build --bundles msi,nsis
       - uses: actions/upload-artifact@v4
         with:
-          name: bundles-${{ runner.os }}
+          name: bundles-Windows
           path: |
-            src-tauri/target/release/bundle/**/*.deb
-            src-tauri/target/release/bundle/**/*.rpm
-            src-tauri/target/release/bundle/**/*.AppImage
             src-tauri/target/release/bundle/**/*.msi
             src-tauri/target/release/bundle/**/*.exe
           if-no-files-found: error
 
+  build-ubuntu:
+    name: bundle deb,appimage on ubuntu
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: system deps (Tauri WebKitGTK + bundling tools)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf file
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: npm ci
+      - name: build bundles
+        shell: bash
+        run: npx tauri build --bundles deb,appimage
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bundles-Ubuntu
+          path: |
+            src-tauri/target/release/bundle/**/*.deb
+            src-tauri/target/release/bundle/**/*.AppImage
+          if-no-files-found: error
+
+  build-fedora:
+    name: bundle rpm for fedora
+    # The rpm targets Fedora (webkit2gtk4.1 + libappindicator-gtk3 deps in
+    # tauri.conf.json) but is produced by the pure-Rust bundler, so it can
+    # build on an Ubuntu host — no rpmbuild needed, only the `rpm` CLI to
+    # verify the package requirements below.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: system deps (Tauri WebKitGTK + rpm inspector)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev rpm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: npm ci
+      - name: build rpm bundle
+        shell: bash
+        run: npx tauri build --bundles rpm
+      - name: verify fedora rpm dependencies
+        shell: bash
+        run: |
+          RPM=$(ls src-tauri/target/release/bundle/rpm/*.rpm)
+          echo "rpm=$RPM"
+          rpm -qpR "$RPM"
+          rpm -qpR "$RPM" | grep -q webkit2gtk4.1 || { echo "missing webkit2gtk4.1 requirement"; exit 1; }
+          rpm -qpR "$RPM" | grep -q libappindicator-gtk3 || { echo "missing libappindicator-gtk3 requirement"; exit 1; }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bundles-Fedora
+          path: src-tauri/target/release/bundle/**/*.rpm
+          if-no-files-found: error
+
   publish:
     name: publish release
-    needs: [preflight, build]
+    needs: [preflight, build-windows, build-ubuntu, build-fedora]
     if: startsWith(github.ref, 'refs/tags/')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
           pattern: bundles-*
           merge-multiple: true
-      - name: list assets
+      - name: flatten per-format subdirectories
         shell: bash
-        run: ls -la artifacts/
+        run: |
+          find artifacts -mindepth 2 -type f -exec mv -t artifacts/ {} +
+          ls -la artifacts/
+      - name: generate SHA-256 checksums
+        shell: bash
+        run: |
+          cd artifacts
+          sha256sum *.msi *.exe *.deb *.rpm *.AppImage > SHA256SUMS.txt
+          cat SHA256SUMS.txt
       - name: publish
         uses: softprops/action-gh-release@v2
         with:
           files: artifacts/*
           generate_release_notes: true
+          fail_on_unmatched_files: true
