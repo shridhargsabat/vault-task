@@ -3,6 +3,7 @@ mod crypto;
 mod db;
 pub(crate) mod state;
 mod tray;
+mod watchdog;
 
 #[cfg(test)]
 mod ipc_contract;
@@ -35,13 +36,16 @@ pub fn run() {
             if let Err(e) = tray::register_toggle_shortcut(app.handle()) {
                 eprintln!("[vault-task] global shortcut unavailable: {e}");
             }
+            // 1s inactivity watchdog + OS session-lock listener.
+            watchdog::spawn_watchdog(app.handle());
+            watchdog::spawn_session_lock_listener(app.handle());
             Ok(())
         })
         .on_window_event(|window, event| match event {
             // Close button hides to tray instead of exiting (OneDrive-style).
             WindowEvent::CloseRequested { api, .. } => {
                 api.prevent_close();
-                let _ = window.hide();
+                tray::hide_main_window(window.app_handle());
             }
             // Popover auto-hides on focus loss unless pinned.
             WindowEvent::Focused(false) => {
@@ -53,7 +57,7 @@ pub fn run() {
                     .map(|s| s.is_pinned || s.window_mode != "popover")
                     .unwrap_or(true);
                 if !keep_open {
-                    let _ = window.hide();
+                    tray::hide_main_window(window.app_handle());
                 }
             }
             _ => {}
@@ -65,6 +69,7 @@ pub fn run() {
             commands::lock_vault,
             commands::update_security_settings,
             commands::record_activity_heartbeat,
+            commands::change_vault_password,
             commands::list_tasks,
             commands::create_task,
             commands::update_task,

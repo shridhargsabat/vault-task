@@ -103,3 +103,57 @@ body {
 .vt-md hr {
   @apply my-3 border-neutral-800;
 }
+
+/* Lock screen entrance */
+@keyframes vt-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.vt-fade-up {
+  animation: vt-fade-up 0.25s ease-out;
+}
+
+/* Wrong-PIN shake (retriggered by remount on each error) */
+@keyframes vt-shake {
+  10%,
+  90% {
+    transform: translateX(-1px);
+  }
+  20%,
+  80% {
+    transform: translateX(2px);
+  }
+  30%,
+  50%,
+  70% {
+    transform: translateX(-3px);
+  }
+  40%,
+  60% {
+    transform: translateX(3px);
+  }
+}
+.vt-shake {
+  animation: vt-shake 0.45s ease;
+}
+
+/* Settings modal entrance */
+@keyframes vt-modal-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.vt-modal-pop {
+  animation: vt-modal-pop 0.18s ease-out;
+}

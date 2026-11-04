@@ -34,6 +34,13 @@ interface VaultState {
   setSearchQuery: (q: string) => void;
   setWindowMode: (m: WindowMode) => void;
   setPinnedState: (p: boolean) => void;
+  isSettingsOpen: boolean;
+  setSettingsOpen: (open: boolean) => void;
+  updateSecuritySettings: (
+    autoLockSeconds: number,
+    lockOnTrayHide: boolean,
+  ) => Promise<boolean>;
+  changePassword: (oldPassword: string, newPassword: string) => Promise<boolean>;
 }
 
 /** Optimistic local merge of an update patch (mirrors backend semantics). */
@@ -62,6 +69,7 @@ export const useVaultStore = create<VaultState>((set, get) => ({
   searchQuery: "",
   windowMode: "popover",
   isPinned: false,
+  isSettingsOpen: false,
   loading: false,
   error: null,
 
@@ -113,6 +121,7 @@ export const useVaultStore = create<VaultState>((set, get) => ({
         tasks: [],
         selectedTaskId: null,
         searchQuery: "",
+        isSettingsOpen: false,
         error: null,
       });
     } catch (e) {
@@ -165,9 +174,13 @@ export const useVaultStore = create<VaultState>((set, get) => ({
         error: null,
       }));
     } catch (e) {
-      set({ error: String(e) });
-      // Resync: drop the optimistic patch on failure.
-      await get().refreshTasks();
+      // Saves racing a lock are expected (autosave flush on unmount):
+      // stay silent instead of flashing an error + failed resync.
+      if (!String(e).includes("vault is locked")) {
+        set({ error: String(e) });
+        // Resync: drop the optimistic patch on failure.
+        await get().refreshTasks();
+      }
     }
   },
 
@@ -192,6 +205,34 @@ export const useVaultStore = create<VaultState>((set, get) => ({
     });
   },
 
+  updateSecuritySettings: async (autoLockSeconds, lockOnTrayHide) => {
+    try {
+      const status = await invoke<VaultStatus>("update_security_settings", {
+        auto_lock_seconds: autoLockSeconds,
+        lock_on_tray_hide: lockOnTrayHide,
+      });
+      set({ status, error: null });
+      return true;
+    } catch (e) {
+      set({ error: String(e) });
+      return false;
+    }
+  },
+
+  changePassword: async (oldPassword, newPassword) => {
+    try {
+      const status = await invoke<VaultStatus>("change_vault_password", {
+        old_password: oldPassword,
+        new_password: newPassword,
+      });
+      set({ status, error: null });
+      return true;
+    } catch {
+      // Modal shows its own inline message; keep the global banner quiet.
+      return false;
+    }
+  },
+
   clearSensitiveData: () =>
     set({ tasks: [], selectedTaskId: null, searchQuery: "" }),
 
@@ -200,4 +241,5 @@ export const useVaultStore = create<VaultState>((set, get) => ({
   setSearchQuery: (q) => set({ searchQuery: q }),
   setWindowMode: (m) => set({ windowMode: m }),
   setPinnedState: (p) => set({ isPinned: p }),
+  setSettingsOpen: (open) => set({ isSettingsOpen: open }),
 }));

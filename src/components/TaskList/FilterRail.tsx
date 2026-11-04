@@ -5,6 +5,7 @@ import {
   Flag,
   ListTodo,
   Lock,
+  Settings,
   Tag,
   Unlock,
 } from "lucide-react";
@@ -30,6 +31,7 @@ export function FilterRail({
   const setActiveFilter = useVaultStore((s) => s.setActiveFilter);
   const searchQuery = useVaultStore((s) => s.searchQuery);
   const setSearchQuery = useVaultStore((s) => s.setSearchQuery);
+  const setSettingsOpen = useVaultStore((s) => s.setSettingsOpen);
   const status = useVaultStore((s) => s.status);
 
   const counts = useMemo(() => {
@@ -83,6 +85,13 @@ export function FilterRail({
             </button>
           );
         })}
+        <button
+          title="Security settings"
+          onClick={() => setSettingsOpen(true)}
+          className="grid h-7 w-7 shrink-0 place-items-center self-center rounded-full bg-neutral-800 text-neutral-400 hover:bg-neutral-700 hover:text-neutral-200"
+        >
+          <Settings className="h-3.5 w-3.5" />
+        </button>
       </nav>
     );
   }
@@ -152,14 +161,23 @@ export function FilterRail({
       </section>
 
       <section className="mt-auto rounded-lg bg-neutral-900 p-3">
-        <p className="mb-1 flex items-center gap-1.5 text-xs font-medium text-neutral-300">
-          {locked ? (
-            <Lock className="h-3.5 w-3.5 text-amber-400" />
-          ) : (
-            <Unlock className="h-3.5 w-3.5 text-emerald-400" />
-          )}
-          {locked ? "Vault locked" : "Vault unlocked"}
-        </p>
+        <div className="mb-1 flex items-center gap-1.5">
+          <p className="flex flex-1 items-center gap-1.5 text-xs font-medium text-neutral-300">
+            {locked ? (
+              <Lock className="h-3.5 w-3.5 text-amber-400" />
+            ) : (
+              <Unlock className="h-3.5 w-3.5 text-emerald-400" />
+            )}
+            {locked ? "Vault locked" : "Vault unlocked"}
+          </p>
+          <button
+            title="Security settings"
+            onClick={() => setSettingsOpen(true)}
+            className="grid h-6 w-6 place-items-center rounded-md text-neutral-500 hover:bg-neutral-800 hover:text-neutral-200"
+          >
+            <Settings className="h-3.5 w-3.5" />
+          </button>
+        </div>
         <p className="text-[11px] leading-relaxed text-neutral-500">
           {tasks.length} task(s) · AES-256-GCM at rest
           {status && ` · auto-lock ${Math.round(status.auto_lock_seconds / 60)}m`}

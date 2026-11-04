@@ -3,6 +3,21 @@
 Tauri v2 (Rust + React 18 + TypeScript + Tailwind + Zustand) desktop app for
 Windows 11, Ubuntu 24.04+, and Fedora 41+.
 
+## Phase 4 — Auto-lock engine + lock screens ✅
+
+- `watchdog.rs`: 1s Tokio loop (idle > `auto_lock_seconds` → zeroize +
+  `vault://locked` + tray sync); Linux D-Bus `ScreenSaver.ActiveChanged`
+  listener (graceful); all hide paths route via `hide_main_window`
+  (honors `lock_on_tray_hide`); tray tooltip/menu reflect lock state
+- `change_vault_password` IPC + transactional `rekey_vault` (decrypt-all
+  before write; fresh salt/nonces; session key swap)
+- `useActivityTracker` (2s-throttled heartbeats, Ctrl/Cmd+L),
+  `SetupVaultView` (confirm field), `UnlockVaultView` (shake + banner),
+  `SecuritySettingsModal` (30s–1h presets, hide-toggle, rekey)
+- `cargo test` 19 green (watchdog ticks, rekey IPC flow) · typecheck 0
+- Headless E2E: Ctrl+L, wrong-PIN banner, 30s watchdog lock, fake
+  ScreenSaver-service D-Bus lock, passphrase change + old-dead/new-works
+
 ## Phase 3 — List + side pane UI ✅
 
 - `FilterRail` (pills / 240px sidebar), `QuickAddBar` (`!high` `@today`

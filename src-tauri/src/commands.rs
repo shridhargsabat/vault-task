@@ -186,6 +186,51 @@ pub fn record_activity_heartbeat(state: State<AppState>) -> Result<(), String> {
     Ok(())
 }
 
+/// Change the master PIN/passphrase: proves the current one, re-encrypts
+/// every task + the verifier under a fresh salt+key (single transaction),
+/// then swaps the in-memory session key. Requires an unlocked vault.
+#[tauri::command(rename_all = "snake_case")]
+pub fn change_vault_password(
+    state: State<AppState>,
+    old_password: String,
+    new_password: String,
+) -> Result<VaultStatus, String> {
+    if new_password.len() < 4 {
+        return Err("new PIN/passphrase must be at least 4 characters".to_string());
+    }
+    // Requires an unlocked vault (also refreshes activity so a rekey never
+    // races the watchdog mid-operation).
+    let old_master = require_master(&state)?;
+    let mut conn = open_db(&state)?;
+    let meta = get_vault_meta(&conn)?.ok_or_else(|| "vault is not initialized".to_string())?;
+    // Prove knowledge of the CURRENT password (not just session possession).
+    let check = MasterKey(
+        derive_key(&old_password, &meta.kdf_salt)
+            .map_err(|_| "current PIN/password is incorrect".to_string())?,
+    );
+    let mut nonce = [0u8; 12];
+    if meta.verifier_nonce.len() != 12 {
+        return Err("vault metadata is corrupted".to_string());
+    }
+    nonce.copy_from_slice(&meta.verifier_nonce);
+    let plain = decrypt_bytes(check.as_bytes(), &meta.verifier_ciphertext, &nonce)
+        .map_err(|_| "current PIN/password is incorrect".to_string())?;
+    if plain.as_slice() != VERIFIER_PLAINTEXT {
+        return Err("current PIN/password is incorrect".to_string());
+    }
+    let new_salt = generate_salt();
+    let new_key = derive_key(&new_password, &new_salt)?;
+    db::rekey_vault(&mut conn, &old_master, &new_key, &new_salt)?;
+    {
+        let mut session = state
+            .session
+            .lock()
+            .map_err(|_| "session lock poisoned".to_string())?;
+        session.unlock(MasterKey(new_key));
+    }
+    current_status(&conn, &state)
+}
+
 #[tauri::command(rename_all = "snake_case")]
 pub fn list_tasks(state: State<AppState>) -> Result<Vec<Task>, String> {
     let master = require_master(&state)?;
@@ -305,12 +350,12 @@ pub fn toggle_maximize_mode(app: AppHandle) -> Result<String, String> {
     Ok(next.to_string())
 }
 
-/// Hide the window to the tray (close-to-tray button).
+/// Hide the window to the tray (close-to-tray button). Locks too when
+/// `lock_on_tray_hide` is enabled.
 #[tauri::command(rename_all = "snake_case")]
 pub fn hide_to_tray(app: AppHandle) -> Result<(), String> {
-    main_window(&app)?
-        .hide()
-        .map_err(|e| format!("hide window: {e}"))
+    tray::hide_main_window(&app);
+    Ok(())
 }
 
 /// Pin the popover so it does not auto-hide on focus loss.

@@ -4373,6 +4373,7 @@ dependencies = [
  "aes-gcm",
  "argon2",
  "chrono",
+ "futures-util",
  "rand",
  "rusqlite",
  "serde",
@@ -4384,6 +4385,7 @@ dependencies = [
  "tauri-plugin-positioner",
  "tokio",
  "uuid",
+ "zbus",
  "zeroize",
 ]
 

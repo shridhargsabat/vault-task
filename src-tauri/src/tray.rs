@@ -151,30 +151,67 @@ pub fn show_maximized<R: Runtime>(
 /// Tray-click / hotkey summon: hide when visible, otherwise open the popover.
 pub fn toggle_visibility<R: Runtime>(app: &AppHandle<R>, window: &WebviewWindow<R>) {
     match window.is_visible() {
-        Ok(true) => {
-            let _ = window.hide();
-        }
+        Ok(true) => hide_main_window(app),
         _ => {
             let _ = show_popover(app, window);
         }
     }
 }
 
-/// Lock the vault from the tray menu and notify the frontend to purge.
+/// Lock the vault and notify the frontend to purge. Funnels every lock
+/// path (tray menu, watchdog, OS session lock, Ctrl+L) through one place.
 pub fn lock_session_and_emit<R: Runtime>(app: &AppHandle<R>) {
     if let Ok(mut session) = app.state::<AppState>().session.lock() {
         session.lock();
     }
     let _ = app.emit("vault://locked", ());
+    refresh_tray_state(app);
+}
+
+/// Hide the main window; when `lock_on_tray_hide` is set, lock the vault too.
+/// All hide paths (titlebar X, close-to-tray, focus loss, tray toggle) route here.
+pub fn hide_main_window<R: Runtime>(app: &AppHandle<R>) {
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.hide();
+    }
+    let should_lock = app
+        .state::<AppState>()
+        .session
+        .lock()
+        .map(|s| s.lock_on_tray_hide && !s.is_locked())
+        .unwrap_or(false);
+    if should_lock {
+        lock_session_and_emit(app);
+    }
+}
+
+/// Sync tray tooltip + menu with the current lock state. Best-effort:
+/// silently no-ops when no tray host exists (headless tests, bare GNOME).
+pub fn refresh_tray_state<R: Runtime>(app: &AppHandle<R>) {
+    let locked = app
+        .state::<AppState>()
+        .session
+        .lock()
+        .map(|s| s.is_locked())
+        .unwrap_or(true);
+    if let Some(tray) = app.tray_by_id("main-tray") {
+        let _ = tray.set_tooltip(Some(if locked {
+            "VaultTask (Locked)"
+        } else {
+            "VaultTask"
+        }));
+        if let Ok(menu) = build_tray_menu(app, locked) {
+            let _ = tray.set_menu(Some(menu));
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
 // Tray icon
 // ---------------------------------------------------------------------------
 
-/// Build the persistent tray icon with its context menu.
-/// Returns Err (logged by the caller) when no tray host exists.
-pub fn create_tray<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
+/// Build the tray context menu for the given lock state.
+pub fn build_tray_menu<R: Runtime>(app: &AppHandle<R>, locked: bool) -> tauri::Result<Menu<R>> {
     let open = MenuItem::with_id(app, "tray-open", "Open VaultTask", true, None::<&str>)?;
     let maximize = MenuItem::with_id(
         app,
@@ -183,18 +220,31 @@ pub fn create_tray<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
         true,
         None::<&str>,
     )?;
-    let lock = MenuItem::with_id(app, "tray-lock", "Lock Vault", true, None::<&str>)?;
+    let lock = MenuItem::with_id(
+        app,
+        "tray-lock",
+        if locked { "Vault Locked" } else { "Lock Vault" },
+        !locked,
+        None::<&str>,
+    )?;
     let quit = MenuItem::with_id(app, "tray-quit", "Quit", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&open, &maximize, &lock, &quit])?;
+    Menu::with_items(app, &[&open, &maximize, &lock, &quit])
+}
+
+/// Build the persistent tray icon with its context menu.
+/// Returns Err (logged by the caller) when no tray host exists.
+pub fn create_tray<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
+    // Vaults boot locked (no in-memory key until unlock).
+    let menu = build_tray_menu(app, true)?;
 
     let icon = app
         .default_window_icon()
         .ok_or_else(|| std::io::Error::other("no default window icon for tray"))?
         .clone();
 
-    TrayIconBuilder::new()
+    TrayIconBuilder::with_id("main-tray")
         .icon(icon)
-        .tooltip("VaultTask")
+        .tooltip("VaultTask (Locked)")
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| {

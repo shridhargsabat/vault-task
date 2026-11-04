@@ -58,9 +58,13 @@ mod tests {
             .invoke_handler(tauri::generate_handler![
                 crate::commands::get_vault_status,
                 crate::commands::setup_vault,
+                crate::commands::unlock_vault,
+                crate::commands::lock_vault,
+                crate::commands::list_tasks,
                 crate::commands::create_task,
                 crate::commands::update_task,
                 crate::commands::update_security_settings,
+                crate::commands::change_vault_password,
             ])
             .build(mock_context(noop_assets()))
             .unwrap();
@@ -116,6 +120,74 @@ mod tests {
         );
         assert_eq!(settings["auto_lock_seconds"], 600);
         assert_eq!(settings["lock_on_tray_hide"], true);
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn change_password_rekeys_and_swaps_session_key() {
+        let db_path = temp_db();
+        let app = mock_builder()
+            .manage(AppState::new(db_path.clone()))
+            .invoke_handler(tauri::generate_handler![
+                crate::commands::setup_vault,
+                crate::commands::unlock_vault,
+                crate::commands::lock_vault,
+                crate::commands::list_tasks,
+                crate::commands::create_task,
+                crate::commands::change_vault_password,
+            ])
+            .build(mock_context(noop_assets()))
+            .unwrap();
+        let webview =
+            tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
+                .build()
+                .unwrap();
+
+        call(
+            &webview,
+            "setup_vault",
+            json!({"password": "old-pass-123"}),
+        );
+        let created = call(
+            &webview,
+            "create_task",
+            json!({"title": "Keep me", "note_markdown": "secret note"}),
+        );
+        assert_eq!(created["title"], "Keep me");
+
+        // Wrong current password is rejected; nothing is rekeyed.
+        let rejected = get_ipc_response(
+            &webview,
+            request(
+                "change_vault_password",
+                json!({"old_password": "nope", "new_password": "new-pass-123"}),
+            ),
+        );
+        assert!(rejected.is_err());
+
+        // Rekey with the correct current password.
+        let status = call(
+            &webview,
+            "change_vault_password",
+            json!({"old_password": "old-pass-123", "new_password": "new-pass-123"}),
+        );
+        assert_eq!(status["locked"], false);
+
+        // Data intact under the new key.
+        let tasks = call(&webview, "list_tasks", json!({}));
+        assert_eq!(tasks[0]["title"], "Keep me");
+        assert_eq!(tasks[0]["note_markdown"], "secret note");
+
+        // Old password is dead, new password works.
+        call(&webview, "lock_vault", json!({}));
+        let bad_login = get_ipc_response(
+            &webview,
+            request("unlock_vault", json!({"password": "old-pass-123"})),
+        );
+        assert!(bad_login.is_err());
+        let ok_login = call(&webview, "unlock_vault", json!({"password": "new-pass-123"}));
+        assert_eq!(ok_login["locked"], false);
 
         let _ = std::fs::remove_file(&db_path);
     }

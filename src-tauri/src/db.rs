@@ -8,7 +8,7 @@ use chrono::Utc;
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 
-use crate::crypto::{MasterKey, decrypt_bytes, encrypt_bytes};
+use crate::crypto::{MasterKey, VERIFIER_PLAINTEXT, decrypt_bytes, encrypt_bytes};
 
 // ---------------------------------------------------------------------------
 // Schema
@@ -546,6 +546,95 @@ pub fn delete_task(conn: &Connection, id: &str) -> Result<bool, String> {
         .execute("DELETE FROM tasks WHERE id = ?1", params![id])
         .map_err(|e| format!("db delete task: {e}"))?;
     Ok(n > 0)
+}
+
+/// Re-encrypt every task + the verifier under a new key (password change).
+/// All-or-nothing: all rows are decrypted with the old key BEFORE the write
+/// transaction opens, so a corrupt row aborts without touching the DB.
+pub fn rekey_vault(
+    conn: &mut Connection,
+    old_master: &MasterKey,
+    new_key: &[u8; 32],
+    new_salt: &[u8],
+) -> Result<(), String> {
+    let old_key = old_master.as_bytes();
+    // 1. Load raw rows.
+    let rows: Vec<(
+        String,
+        Vec<u8>,
+        Vec<u8>,
+        Vec<u8>,
+        Vec<u8>,
+        Vec<u8>,
+        Vec<u8>,
+    )> = {
+        let mut stmt = conn
+            .prepare("SELECT id, encrypted_title, title_nonce, encrypted_note, note_nonce, encrypted_subtasks, subtasks_nonce FROM tasks")
+            .map_err(|e| format!("db prepare rekey: {e}"))?;
+        stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, Vec<u8>>(1)?,
+                r.get::<_, Vec<u8>>(2)?,
+                r.get::<_, Vec<u8>>(3)?,
+                r.get::<_, Vec<u8>>(4)?,
+                r.get::<_, Vec<u8>>(5)?,
+                r.get::<_, Vec<u8>>(6)?,
+            ))
+        })
+        .map_err(|e| format!("db rekey scan: {e}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| format!("db rekey row: {e}"))?
+    };
+    // 2. Decrypt with the old key, re-encrypt with the new key (fresh nonces).
+    let mut rekeyed = Vec::with_capacity(rows.len());
+    for (id, enc_title, title_nonce, enc_note, note_nonce, enc_sub, sub_nonce) in rows {
+        let title = decrypt_bytes(old_key, &enc_title, &nonce_from_slice(&title_nonce)?)?;
+        let note = decrypt_bytes(old_key, &enc_note, &nonce_from_slice(&note_nonce)?)?;
+        let subtasks = decrypt_bytes(old_key, &enc_sub, &nonce_from_slice(&sub_nonce)?)?;
+        let (new_enc_title, new_title_nonce) = encrypt_bytes(new_key, &title)?;
+        let (new_enc_note, new_note_nonce) = encrypt_bytes(new_key, &note)?;
+        let (new_enc_sub, new_sub_nonce) = encrypt_bytes(new_key, &subtasks)?;
+        rekeyed.push((
+            id,
+            new_enc_title,
+            new_title_nonce,
+            new_enc_note,
+            new_note_nonce,
+            new_enc_sub,
+            new_sub_nonce,
+        ));
+    }
+    let (verifier_ct, verifier_nonce) = encrypt_bytes(new_key, VERIFIER_PLAINTEXT)?;
+    // 3. Write everything in one transaction.
+    let tx = conn
+        .transaction()
+        .map_err(|e| format!("db rekey tx: {e}"))?;
+    tx.execute(
+        "UPDATE vault_meta SET kdf_salt = ?1, verifier_nonce = ?2, verifier_ciphertext = ?3 WHERE id = 1",
+        params![new_salt, verifier_nonce.as_slice(), verifier_ct],
+    )
+    .map_err(|e| format!("db rekey meta: {e}"))?;
+    {
+        let mut update = tx
+            .prepare("UPDATE tasks SET encrypted_title = ?1, title_nonce = ?2, encrypted_note = ?3, note_nonce = ?4, encrypted_subtasks = ?5, subtasks_nonce = ?6 WHERE id = ?7")
+            .map_err(|e| format!("db prepare rekey tasks: {e}"))?;
+        for (id, enc_title, title_nonce, enc_note, note_nonce, enc_sub, sub_nonce) in &rekeyed {
+            update
+                .execute(params![
+                    enc_title,
+                    title_nonce.as_slice(),
+                    enc_note,
+                    note_nonce.as_slice(),
+                    enc_sub,
+                    sub_nonce.as_slice(),
+                    id
+                ])
+                .map_err(|e| format!("db rekey task: {e}"))?;
+        }
+    }
+    tx.commit().map_err(|e| format!("db rekey commit: {e}"))?;
+    Ok(())
 }
 
 #[cfg(test)]
