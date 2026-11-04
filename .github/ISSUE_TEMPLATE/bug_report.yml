@@ -1,0 +1,67 @@
+name: Bug report
+description: Something locked wrong, lost data, or behaved unexpectedly
+labels: ["bug"]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: VaultTask version
+      description: From the installer filename or About row (e.g. 0.1.0)
+      placeholder: "0.1.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: Install method
+      options:
+        - MSI (.msi)
+        - NSIS (.exe)
+        - deb (.deb)
+        - rpm (.rpm)
+        - AppImage
+        - built from source
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: OS and desktop
+      placeholder: "Windows 11 24H2 / Ubuntu 24.04 GNOME Wayland / Fedora 42 KDE"
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: Which part is affected?
+      options:
+        - Vault (setup / unlock / passphrase change)
+        - Auto-lock / watchdog
+        - Tasks / filters / quick-add
+        - Notes / subtasks / due dates
+        - Tray / window modes / shortcut
+        - Autostart / single-instance
+        - Packaging / installer / CI
+        - Docs
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Exact clicks, keys, or commands. Never paste your real vault password.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected vs actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Terminal output when run with logging, or CI link. Wrap in triple backticks.
+      render: shell

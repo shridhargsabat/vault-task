@@ -1,0 +1,46 @@
+name: Feature request
+description: Propose an enhancement for VaultTask
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What can't you do today? What task/note workflow motivates this?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: What should happen instead? Include UI placement or IPC shape if relevant.
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Vault (setup / unlock / passphrase change)
+        - Auto-lock / watchdog
+        - Tasks / filters / quick-add
+        - Notes / subtasks / due dates
+        - Tray / window modes / shortcut
+        - Autostart / single-instance
+        - Packaging / installer / CI
+        - Docs
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Other approaches or workarounds you tried.
+  - type: checkboxes
+    id: platforms
+    attributes:
+      label: Platforms this matters on
+      options:
+        - label: Windows 11
+        - label: Ubuntu
+        - label: Fedora
