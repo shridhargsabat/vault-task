@@ -3,6 +3,17 @@
 All notable changes to VaultTask are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [Unreleased]
+
+### Added — Phase 6: Encrypted backup + Markdown export
+
+- Export/import of signed `.vault` backup bundles (SHA-256 integrity,
+  password-verified atomic restore, ciphertext only — safe to move
+  across Windows / Ubuntu / Fedora machines)
+- Unlocked-session Markdown export: one `.md` per task with YAML
+  frontmatter (status, priority, due date, tags) plus subtasks and notes
+- Backup & Data section in Security settings with native file dialogs
+
 ## [0.1.0] - 2026-11-04
 
 First release: encrypted tray task manager with Markdown notes for

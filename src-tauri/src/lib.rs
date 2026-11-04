@@ -15,6 +15,7 @@ use tauri::{Manager, WindowEvent};
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_positioner::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
@@ -96,6 +97,9 @@ pub fn run() {
             commands::toggle_maximize_mode,
             commands::hide_to_tray,
             commands::set_pinned,
+            commands::export_encrypted_backup,
+            commands::import_encrypted_backup,
+            commands::export_decrypted_markdown,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

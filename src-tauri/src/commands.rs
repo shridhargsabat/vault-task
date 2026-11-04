@@ -12,8 +12,10 @@ use crate::{
         MasterKey, VERIFIER_PLAINTEXT, decrypt_bytes, derive_key, encrypt_bytes, generate_salt,
     },
     db::{
-        self, CreateTaskInput, Subtask, Task, UpdateTaskPatch, get_vault_meta, init_db,
-        insert_vault_meta, update_vault_settings,
+        self, BackupStats, CreateTaskInput, ImportStats, Subtask, Task, UpdateTaskPatch,
+        build_backup_payload, get_vault_meta, init_db, insert_vault_meta, parse_backup_bundle,
+        render_task_markdown, restore_backup_payload, seal_backup_bundle, serialize_bundle,
+        slugify_filename, update_vault_settings, verify_backup_password,
     },
     state::{AppState, DEFAULT_AUTO_LOCK_SECONDS},
     tray,
@@ -379,4 +381,81 @@ pub fn set_pinned(app: AppHandle, pinned: bool) -> Result<bool, String> {
         .map_err(|_| "session lock poisoned".to_string())?;
     session.is_pinned = pinned;
     Ok(pinned)
+}
+
+// ---------------------------------------------------------------------------
+// Backup & export commands (Phase 6)
+// ---------------------------------------------------------------------------
+
+/// Export the vault as a signed `.vault` bundle (ciphertext only, SHA-256
+/// integrity). Requires an unlocked vault.
+#[tauri::command(rename_all = "snake_case")]
+pub fn export_encrypted_backup(
+    state: State<AppState>,
+    destination_path: String,
+) -> Result<BackupStats, String> {
+    require_master(&state)?;
+    let conn = open_db(&state)?;
+    let payload = build_backup_payload(&conn)?;
+    let task_count = payload.tasks.len();
+    let bundle = seal_backup_bundle(&payload)?;
+    let text = serialize_bundle(&bundle)?;
+    let file_bytes = text.len() as u64;
+    std::fs::write(&destination_path, text).map_err(|e| format!("write backup: {e}"))?;
+    Ok(BackupStats {
+        task_count,
+        file_bytes,
+    })
+}
+
+/// Restore a `.vault` bundle: checksum first, then password proof against
+/// the backup's own salt+verifier, then an atomic replace. No session
+/// needed (fresh-machine restores); the session is locked afterwards
+/// because the DB content changed under any old key.
+#[tauri::command(rename_all = "snake_case")]
+pub fn import_encrypted_backup(
+    state: State<AppState>,
+    source_path: String,
+    master_password: String,
+) -> Result<ImportStats, String> {
+    let meta = std::fs::metadata(&source_path).map_err(|e| format!("read backup: {e}"))?;
+    if meta.len() > db::MAX_BACKUP_BYTES {
+        return Err("backup file is too large".to_string());
+    }
+    let text = std::fs::read_to_string(&source_path).map_err(|e| format!("read backup: {e}"))?;
+    let payload = parse_backup_bundle(&text)?;
+    verify_backup_password(&payload, &master_password)?;
+    let mut conn = open_db(&state)?;
+    let task_count = restore_backup_payload(&mut conn, &payload)?;
+    // The DB changed under any old key: drop it + mirror the new settings.
+    {
+        let mut session = state
+            .session
+            .lock()
+            .map_err(|_| "session lock poisoned".to_string())?;
+        session.lock();
+        session.auto_lock_seconds = payload.meta.auto_lock_seconds;
+        session.lock_on_tray_hide = payload.meta.lock_on_tray_hide;
+    }
+    Ok(ImportStats { task_count })
+}
+
+/// Export every task as `<slug>-<id8>.md` with YAML frontmatter.
+/// Unlocked session required — this writes DECRYPTED data.
+#[tauri::command(rename_all = "snake_case")]
+pub fn export_decrypted_markdown(
+    state: State<AppState>,
+    destination_dir: String,
+) -> Result<usize, String> {
+    let master = require_master(&state)?;
+    let conn = open_db(&state)?;
+    let tasks = db::list_tasks(&conn, &master)?;
+    let dir = std::path::Path::new(&destination_dir);
+    std::fs::create_dir_all(dir).map_err(|e| format!("create export dir: {e}"))?;
+    for task in &tasks {
+        let name = slugify_filename(&task.title, &task.id);
+        let md = render_task_markdown(task);
+        std::fs::write(dir.join(name), md).map_err(|e| format!("write markdown: {e}"))?;
+    }
+    Ok(tasks.len())
 }

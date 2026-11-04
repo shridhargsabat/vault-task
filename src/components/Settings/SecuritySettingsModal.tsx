@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { Check, Settings2, X } from "lucide-react";
+import { open } from "@tauri-apps/plugin-dialog";
 import { useVaultStore } from "../../store/useVaultStore";
+import type { BackupResult } from "../../types/models";
 
 const TIMEOUT_PRESETS: { seconds: number; label: string }[] = [
   { seconds: 30, label: "30s" },
@@ -20,6 +22,9 @@ export function SecuritySettingsModal() {
   const autostartEnabled = useVaultStore((s) => s.autostartEnabled);
   const refreshAutostart = useVaultStore((s) => s.refreshAutostart);
   const setAutostart = useVaultStore((s) => s.setAutostart);
+  const exportBackup = useVaultStore((s) => s.exportBackup);
+  const restoreBackup = useVaultStore((s) => s.restoreBackup);
+  const exportMarkdown = useVaultStore((s) => s.exportMarkdown);
   const [saving, setSaving] = useState(false);
   const [savedTick, setSavedTick] = useState(0);
   const [currentPw, setCurrentPw] = useState("");
@@ -28,10 +33,17 @@ export function SecuritySettingsModal() {
   const [pwBusy, setPwBusy] = useState(false);
   const [autostartBusy, setAutostartBusy] = useState(false);
   const [pwMessage, setPwMessage] = useState<{ ok: boolean; text: string } | null>(null);
+  const [backupBusy, setBackupBusy] = useState(false);
+  const [backupMessage, setBackupMessage] = useState<BackupResult | null>(null);
+  const [restorePath, setRestorePath] = useState<string | null>(null);
+  const [restorePw, setRestorePw] = useState("");
 
   useEffect(() => {
     if (!isOpen) return;
     setPwMessage(null);
+    setBackupMessage(null);
+    setRestorePath(null);
+    setRestorePw("");
     void refreshAutostart();
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") setOpen(false);
@@ -84,6 +96,59 @@ export function SecuritySettingsModal() {
       await setAutostart(!autostartEnabled);
     } finally {
       setAutostartBusy(false);
+    }
+  };
+
+  const doExportBackup = async () => {
+    setBackupBusy(true);
+    try {
+      const res = await exportBackup();
+      if (res) setBackupMessage(res);
+    } finally {
+      setBackupBusy(false);
+    }
+  };
+
+  const doExportMarkdown = async () => {
+    setBackupBusy(true);
+    try {
+      const res = await exportMarkdown();
+      if (res) setBackupMessage(res);
+    } finally {
+      setBackupBusy(false);
+    }
+  };
+
+  const pickRestoreFile = async () => {
+    try {
+      const picked = await open({
+        title: "Restore from backup",
+        filters: [{ name: "VaultTask backup", extensions: ["vault"] }],
+      });
+      if (typeof picked === "string") {
+        setRestorePath(picked);
+        setBackupMessage(null);
+      }
+    } catch (e) {
+      setBackupMessage({ ok: false, text: String(e) });
+    }
+  };
+
+  const doRestore = async () => {
+    if (!restorePath || restorePw.length === 0) {
+      setBackupMessage({ ok: false, text: "Enter the backup's master PIN / passphrase." });
+      return;
+    }
+    setBackupBusy(true);
+    try {
+      const res = await restoreBackup(restorePath, restorePw);
+      setBackupMessage(res);
+      if (res.ok) {
+        setRestorePath(null);
+        setRestorePw("");
+      }
+    } finally {
+      setBackupBusy(false);
     }
   };
 
@@ -237,6 +302,66 @@ export function SecuritySettingsModal() {
           >
             {pwBusy ? "Re-encrypting vault…" : "Change passphrase"}
           </button>
+        </section>
+
+        <section className="flex flex-col gap-1.5 border-t border-neutral-800 pt-3">
+          <p className="text-xs font-medium text-neutral-300">Backup &amp; Data</p>
+          <div className="grid grid-cols-2 gap-1.5">
+            <button
+              onClick={() => void doExportBackup()}
+              disabled={backupBusy}
+              className="rounded-md bg-neutral-700 px-3 py-2 text-xs font-medium hover:bg-neutral-600 disabled:opacity-50"
+            >
+              Export Encrypted Backup (.vault)
+            </button>
+            <button
+              onClick={() => void doExportMarkdown()}
+              disabled={backupBusy}
+              className="rounded-md bg-neutral-700 px-3 py-2 text-xs font-medium hover:bg-neutral-600 disabled:opacity-50"
+            >
+              Export All as Markdown
+            </button>
+          </div>
+          <button
+            onClick={() => void pickRestoreFile()}
+            disabled={backupBusy}
+            className="rounded-md bg-neutral-700 px-3 py-2 text-xs font-medium hover:bg-neutral-600 disabled:opacity-50"
+          >
+            Restore from Backup…
+          </button>
+          {restorePath && (
+            <>
+              <p className="truncate text-[11px] text-neutral-400" title={restorePath}>
+                {restorePath}
+              </p>
+              <input
+                type="password"
+                value={restorePw}
+                onChange={(e) => setRestorePw(e.currentTarget.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") void doRestore();
+                }}
+                placeholder="Backup's master PIN / passphrase"
+                className="rounded-md bg-neutral-800 px-3 py-2 text-xs outline-none ring-emerald-500 focus:ring-2"
+              />
+              <button
+                onClick={() => void doRestore()}
+                disabled={backupBusy}
+                className="rounded-md bg-red-900/80 px-3 py-2 text-xs font-medium text-red-100 hover:bg-red-800 disabled:opacity-50"
+              >
+                {backupBusy ? "Restoring…" : "Restore now (replaces current vault)"}
+              </button>
+            </>
+          )}
+          {backupMessage && (
+            <p
+              className={`text-xs ${
+                backupMessage.ok ? "text-emerald-400" : "text-red-300"
+              }`}
+            >
+              {backupMessage.text}
+            </p>
+          )}
         </section>
       </div>
     </div>

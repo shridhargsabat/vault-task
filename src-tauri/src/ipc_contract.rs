@@ -195,4 +195,104 @@ mod tests {
 
         let _ = std::fs::remove_file(&db_path);
     }
+
+    #[test]
+    fn backup_export_import_roundtrip_via_ipc() {
+        let db_path = temp_db();
+        let app = mock_builder()
+            .manage(AppState::new(db_path.clone()))
+            .invoke_handler(tauri::generate_handler![
+                crate::commands::setup_vault,
+                crate::commands::unlock_vault,
+                crate::commands::create_task,
+                crate::commands::list_tasks,
+                crate::commands::export_encrypted_backup,
+                crate::commands::import_encrypted_backup,
+                crate::commands::export_decrypted_markdown,
+            ])
+            .build(mock_context(noop_assets()))
+            .unwrap();
+        let webview = tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
+            .build()
+            .unwrap();
+
+        let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let bak_path =
+            std::env::temp_dir().join(format!("vault-test-{}-{}.vault", std::process::id(), n));
+        let md_dir =
+            std::env::temp_dir().join(format!("vault-test-md-{}-{}", std::process::id(), n));
+
+        call(
+            &webview,
+            "setup_vault",
+            json!({"password": "backup-pass-1"}),
+        );
+        call(
+            &webview,
+            "create_task",
+            json!({"title": "Pack me", "note_markdown": "s3cret-note", "tags": ["t"], "due_date": "2026-12-01"}),
+        );
+
+        // Export carries ciphertext only — the plaintext note is absent.
+        let stats = call(
+            &webview,
+            "export_encrypted_backup",
+            json!({"destination_path": bak_path.to_string_lossy()}),
+        );
+        assert_eq!(stats["task_count"], 1);
+        assert!(stats["file_bytes"].as_u64().unwrap() > 0);
+        let raw = std::fs::read_to_string(&bak_path).unwrap();
+        assert!(raw.contains("sha256_hex"));
+        assert!(!raw.contains("s3cret-note"));
+
+        // Wrong password: rejected, local vault untouched (still unlocked).
+        let bad = get_ipc_response(
+            &webview,
+            request(
+                "import_encrypted_backup",
+                json!({"source_path": bak_path.to_string_lossy(), "master_password": "wrong"}),
+            ),
+        );
+        assert!(bad.is_err());
+        let still_there = call(&webview, "list_tasks", json!({}));
+        assert_eq!(still_there[0]["title"], "Pack me");
+
+        // Markdown export decrypts with the session key.
+        let count = call(
+            &webview,
+            "export_decrypted_markdown",
+            json!({"destination_dir": md_dir.to_string_lossy()}),
+        );
+        assert_eq!(count, 1);
+        let md_file = std::fs::read_dir(&md_dir).unwrap().next().unwrap().unwrap();
+        assert!(md_file.file_name().to_string_lossy().ends_with(".md"));
+        let md = std::fs::read_to_string(md_file.path()).unwrap();
+        assert!(md.contains("status: todo"));
+        assert!(md.contains("due_date: 2026-12-01"));
+        assert!(md.contains("# Pack me"));
+        assert!(md.contains("s3cret-note"));
+
+        // Correct password: atomic restore, session locked, data lossless.
+        let imported = call(
+            &webview,
+            "import_encrypted_backup",
+            json!({"source_path": bak_path.to_string_lossy(), "master_password": "backup-pass-1"}),
+        );
+        assert_eq!(imported["task_count"], 1);
+        let locked_out = get_ipc_response(&webview, request("list_tasks", json!({})));
+        assert!(locked_out.is_err());
+        let ok_login = call(
+            &webview,
+            "unlock_vault",
+            json!({"password": "backup-pass-1"}),
+        );
+        assert_eq!(ok_login["locked"], false);
+        let tasks = call(&webview, "list_tasks", json!({}));
+        assert_eq!(tasks[0]["title"], "Pack me");
+        assert_eq!(tasks[0]["note_markdown"], "s3cret-note");
+
+        let _ = std::fs::remove_file(&db_path);
+        let _ = std::fs::remove_file(&bak_path);
+        let _ = std::fs::remove_dir_all(&md_dir);
+    }
 }

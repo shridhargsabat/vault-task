@@ -1,9 +1,13 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 import { disable, enable, isEnabled } from "@tauri-apps/plugin-autostart";
+import { open, save } from "@tauri-apps/plugin-dialog";
 import type {
   ActiveFilter,
+  BackupResult,
+  BackupStats,
   CreateTaskInput,
+  ImportStats,
   Task,
   UpdateTaskInput,
   VaultStatus,
@@ -45,6 +49,9 @@ interface VaultState {
   autostartEnabled: boolean | null;
   refreshAutostart: () => Promise<void>;
   setAutostart: (enabled: boolean) => Promise<void>;
+  exportBackup: () => Promise<BackupResult | null>;
+  restoreBackup: (sourcePath: string, password: string) => Promise<BackupResult>;
+  exportMarkdown: () => Promise<BackupResult | null>;
 }
 
 /** Optimistic local merge of an update patch (mirrors backend semantics). */
@@ -257,6 +264,60 @@ export const useVaultStore = create<VaultState>((set, get) => ({
       set({ autostartEnabled: enabled, error: null });
     } catch (e) {
       set({ error: String(e) });
+    }
+  },
+
+  exportBackup: async () => {
+    try {
+      const dest = await save({
+        defaultPath: "vaulttask-backup.vault",
+        filters: [{ name: "VaultTask backup", extensions: ["vault"] }],
+      });
+      if (!dest) return null;
+      const stats = await invoke<BackupStats>("export_encrypted_backup", {
+        destination_path: dest,
+      });
+      return { ok: true, text: `Backup saved (${stats.task_count} tasks).` };
+    } catch (e) {
+      return { ok: false, text: String(e) };
+    }
+  },
+
+  restoreBackup: async (sourcePath: string, password: string) => {
+    try {
+      const stats = await invoke<ImportStats>("import_encrypted_backup", {
+        source_path: sourcePath,
+        master_password: password,
+      });
+      // Backend locked the session (DB replaced) — purge + refresh status.
+      const status = await invoke<VaultStatus>("get_vault_status");
+      set({
+        status,
+        tasks: [],
+        selectedTaskId: null,
+        searchQuery: "",
+        isSettingsOpen: false,
+        error: null,
+      });
+      return {
+        ok: true,
+        text: `Restored ${stats.task_count} tasks. Vault is locked — unlock to continue.`,
+      };
+    } catch (e) {
+      return { ok: false, text: String(e) };
+    }
+  },
+
+  exportMarkdown: async () => {
+    try {
+      const dir = await open({ directory: true, title: "Export Markdown to folder" });
+      if (typeof dir !== "string") return null;
+      const count = await invoke<number>("export_decrypted_markdown", {
+        destination_dir: dir,
+      });
+      return { ok: true, text: `Exported ${count} tasks as Markdown.` };
+    } catch (e) {
+      return { ok: false, text: String(e) };
     }
   },
 
