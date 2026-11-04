@@ -74,13 +74,13 @@ fn current_status(conn: &Connection, state: &State<AppState>) -> Result<VaultSta
     }
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn get_vault_status(state: State<AppState>) -> Result<VaultStatus, String> {
     let conn = open_db(&state)?;
     current_status(&conn, &state)
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn setup_vault(state: State<AppState>, password: String) -> Result<VaultStatus, String> {
     if password.len() < 4 {
         return Err("PIN/passphrase must be at least 4 characters".to_string());
@@ -112,7 +112,7 @@ pub fn setup_vault(state: State<AppState>, password: String) -> Result<VaultStat
     current_status(&conn, &state)
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn unlock_vault(state: State<AppState>, password: String) -> Result<VaultStatus, String> {
     let conn = open_db(&state)?;
     let meta = get_vault_meta(&conn)?.ok_or_else(|| "vault is not initialized".to_string())?;
@@ -139,7 +139,7 @@ pub fn unlock_vault(state: State<AppState>, password: String) -> Result<VaultSta
     current_status(&conn, &state)
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn lock_vault(state: State<AppState>) -> Result<VaultStatus, String> {
     {
         let mut session = state
@@ -152,7 +152,7 @@ pub fn lock_vault(state: State<AppState>) -> Result<VaultStatus, String> {
     current_status(&conn, &state)
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn update_security_settings(
     state: State<AppState>,
     auto_lock_seconds: u64,
@@ -176,7 +176,7 @@ pub fn update_security_settings(
     current_status(&conn, &state)
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn record_activity_heartbeat(state: State<AppState>) -> Result<(), String> {
     let mut session = state
         .session
@@ -186,14 +186,14 @@ pub fn record_activity_heartbeat(state: State<AppState>) -> Result<(), String> {
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn list_tasks(state: State<AppState>) -> Result<Vec<Task>, String> {
     let master = require_master(&state)?;
     let conn = open_db(&state)?;
     db::list_tasks(&conn, &master)
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 #[allow(clippy::too_many_arguments)]
 pub fn create_task(
     state: State<AppState>,
@@ -222,7 +222,7 @@ pub fn create_task(
     )
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 #[allow(clippy::too_many_arguments)]
 pub fn update_task(
     state: State<AppState>,
@@ -257,7 +257,7 @@ pub fn update_task(
     )
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn delete_task(state: State<AppState>, id: String) -> Result<bool, String> {
     require_master(&state)?;
     let conn = open_db(&state)?;
@@ -275,7 +275,7 @@ fn main_window(app: &AppHandle) -> Result<tauri::WebviewWindow, String> {
 
 /// Switch to `popover` (420x620 tray flyout) or `maximized` (workspace).
 /// Returns the new mode.
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn set_window_mode(app: AppHandle, mode: String) -> Result<String, String> {
     let window = main_window(&app)?;
     match mode.as_str() {
@@ -287,7 +287,7 @@ pub fn set_window_mode(app: AppHandle, mode: String) -> Result<String, String> {
 }
 
 /// Toggle between popover and maximized. Returns the new mode.
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn toggle_maximize_mode(app: AppHandle) -> Result<String, String> {
     let current = app
         .state::<AppState>()
@@ -306,7 +306,7 @@ pub fn toggle_maximize_mode(app: AppHandle) -> Result<String, String> {
 }
 
 /// Hide the window to the tray (close-to-tray button).
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn hide_to_tray(app: AppHandle) -> Result<(), String> {
     main_window(&app)?
         .hide()
@@ -314,7 +314,7 @@ pub fn hide_to_tray(app: AppHandle) -> Result<(), String> {
 }
 
 /// Pin the popover so it does not auto-hide on focus loss.
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn set_pinned(app: AppHandle, pinned: bool) -> Result<bool, String> {
     let state = app.state::<AppState>();
     let mut session = state

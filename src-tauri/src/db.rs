@@ -658,4 +658,29 @@ mod tests {
         assert!(create_task(&conn, &master, mk("t", Some("nope"), None)).is_err());
         assert!(create_task(&conn, &master, mk("t", None, Some(9))).is_err());
     }
+
+    #[test]
+    fn due_date_and_tags_roundtrip() {
+        let conn = mem_db();
+        let master = test_key();
+        let t = create_task(
+            &conn,
+            &master,
+            CreateTaskInput {
+                title: "due probe".to_string(),
+                note_markdown: None,
+                status: None,
+                priority: Some(3),
+                folder_id: None,
+                tags: Some(vec!["home".to_string()]),
+                due_date: Some("2026-11-05".to_string()),
+            },
+        )
+        .unwrap();
+        assert_eq!(t.due_date.as_deref(), Some("2026-11-05"));
+        assert_eq!(t.tags, vec!["home".to_string()]);
+        let listed = list_tasks(&conn, &master).unwrap();
+        assert_eq!(listed[0].due_date.as_deref(), Some("2026-11-05"));
+        assert_eq!(listed[0].priority, 3);
+    }
 }

@@ -2,7 +2,9 @@ import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 import type {
   ActiveFilter,
+  CreateTaskInput,
   Task,
+  UpdateTaskInput,
   VaultStatus,
   WindowMode,
 } from "../types/models";
@@ -22,7 +24,10 @@ interface VaultState {
   unlockVault: (password: string) => Promise<void>;
   lockVault: () => Promise<void>;
   refreshTasks: () => Promise<void>;
-  createTask: (title: string) => Promise<void>;
+  createTask: (input: CreateTaskInput) => Promise<Task | null>;
+  updateTask: (id: string, patch: UpdateTaskInput) => Promise<void>;
+  deleteTask: (id: string) => Promise<void>;
+  toggleTaskDone: (id: string) => Promise<void>;
   clearSensitiveData: () => void;
   setSelectedTaskId: (id: string | null) => void;
   setActiveFilter: (f: ActiveFilter) => void;
@@ -31,7 +36,25 @@ interface VaultState {
   setPinnedState: (p: boolean) => void;
 }
 
-export const useVaultStore = create<VaultState>((set) => ({
+/** Optimistic local merge of an update patch (mirrors backend semantics). */
+function applyPatch(t: Task, patch: UpdateTaskInput): Task {
+  return {
+    ...t,
+    ...(patch.title !== undefined ? { title: patch.title } : {}),
+    ...(patch.note_markdown !== undefined
+      ? { note_markdown: patch.note_markdown }
+      : {}),
+    ...(patch.subtasks !== undefined ? { subtasks: patch.subtasks } : {}),
+    ...(patch.status !== undefined ? { status: patch.status } : {}),
+    ...(patch.priority !== undefined ? { priority: patch.priority } : {}),
+    ...(patch.is_pinned !== undefined ? { is_pinned: patch.is_pinned } : {}),
+    ...(patch.folder_id !== undefined ? { folder_id: patch.folder_id } : {}),
+    ...(patch.tags !== undefined ? { tags: patch.tags } : {}),
+    ...(patch.due_date !== undefined ? { due_date: patch.due_date } : {}),
+  };
+}
+
+export const useVaultStore = create<VaultState>((set, get) => ({
   status: null,
   tasks: [],
   selectedTaskId: null,
@@ -106,17 +129,67 @@ export const useVaultStore = create<VaultState>((set) => ({
     }
   },
 
-  createTask: async (title: string) => {
+  createTask: async (input: CreateTaskInput) => {
     try {
       const task = await invoke<Task>("create_task", {
-        title,
-        note_markdown: "",
-        priority: 2,
+        title: input.title,
+        note_markdown: input.note_markdown ?? "",
+        status: input.status,
+        priority: input.priority ?? 2,
+        folder_id: input.folder_id,
+        tags: input.tags,
+        due_date: input.due_date ?? null,
       });
       set((s) => ({ tasks: [task, ...s.tasks], error: null }));
+      return task;
     } catch (e) {
       set({ error: String(e) });
+      return null;
     }
+  },
+
+  updateTask: async (id: string, patch: UpdateTaskInput) => {
+    set((s) => ({
+      tasks: s.tasks.map((t) => (t.id === id ? applyPatch(t, patch) : t)),
+    }));
+    try {
+      const { due_date, ...rest } = patch;
+      const updated = await invoke<Task>("update_task", {
+        id,
+        ...rest,
+        // Backend clears the date on empty string; null would mean "unchanged".
+        ...(due_date !== undefined ? { due_date: due_date ?? "" } : {}),
+      });
+      set((s) => ({
+        tasks: s.tasks.map((t) => (t.id === id ? updated : t)),
+        error: null,
+      }));
+    } catch (e) {
+      set({ error: String(e) });
+      // Resync: drop the optimistic patch on failure.
+      await get().refreshTasks();
+    }
+  },
+
+  deleteTask: async (id: string) => {
+    const prev = get().tasks;
+    set((s) => ({
+      tasks: s.tasks.filter((t) => t.id !== id),
+      selectedTaskId: s.selectedTaskId === id ? null : s.selectedTaskId,
+    }));
+    try {
+      await invoke("delete_task", { id });
+    } catch (e) {
+      set({ tasks: prev, error: String(e) });
+    }
+  },
+
+  toggleTaskDone: async (id: string) => {
+    const t = get().tasks.find((x) => x.id === id);
+    if (!t) return;
+    await get().updateTask(id, {
+      status: t.status === "done" ? "todo" : "done",
+    });
   },
 
   clearSensitiveData: () =>

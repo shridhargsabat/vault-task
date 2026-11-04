@@ -3,6 +3,24 @@
 Tauri v2 (Rust + React 18 + TypeScript + Tailwind + Zustand) desktop app for
 Windows 11, Ubuntu 24.04+, and Fedora 41+.
 
+## Phase 3 — List + side pane UI ✅
+
+- `FilterRail` (pills / 240px sidebar), `QuickAddBar` (`!high` `@today`
+  shortcuts with live hints), `TaskListView` (search, `#tag`, badges,
+  subtask progress, note/pin indicators)
+- `TaskDetailPane` (320px drawer / docked): status, `PrioritySelect`,
+  `DueDatePicker` (custom calendar popover), tags, `SubtaskList`,
+  `NoteEditor` (toolbar, write/preview, 300ms debounced autosave
+  flushed on task switch)
+- **Fix:** all commands now `rename_all = "snake_case"` — Tauri v2
+  defaults IPC arg keys to camelCase and silently drops mismatched
+  `Option` args (due dates/notes never arrived). Pinned by
+  `src-tauri/src/ipc_contract.rs` mock-runtime IPC test (fails pre-fix).
+- `cargo test` 14 green · `typecheck` 0 · `vite build` 0
+- Headless E2E: setup/unlock, 5 tasks via quick-add, drawer open/close,
+  note autosave persisted (36B ciphertext), maximized 3-pane + docked
+  detail, restart persistence
+
 ## Phase 2 — Tray + dual-mode window manager ✅
 
 - `src-tauri/src/tray.rs` — `TrayIconBuilder` (Open / Maximize / Lock / Quit),

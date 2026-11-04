@@ -1,8 +1,11 @@
-mod commands;
+pub(crate) mod commands;
 mod crypto;
 mod db;
-mod state;
+pub(crate) mod state;
 mod tray;
+
+#[cfg(test)]
+mod ipc_contract;
 
 use state::AppState;
 use tauri::{Manager, WindowEvent};

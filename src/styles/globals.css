@@ -2,7 +2,7 @@
 @tailwind components;
 @tailwind utilities;
 
-/* VaultTask Phase 1 baseline */
+/* VaultTask baseline */
 html,
 body,
 #root {
@@ -13,11 +13,93 @@ body {
   @apply bg-neutral-950 text-neutral-100 antialiased;
 }
 
-/* Smooth transitions for popover <-> maximized mode switches (Phase 2/3) */
+/* Smooth transitions for popover <-> maximized mode switches */
 .vt-transition {
   transition:
     width 0.25s ease,
     height 0.25s ease,
     transform 0.25s ease,
     opacity 0.2s ease;
+}
+
+/* Slide-over drawer entrance (popover detail pane) */
+@keyframes vt-slide-in-right {
+  from {
+    transform: translateX(100%);
+    opacity: 0.4;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+.vt-drawer-enter {
+  animation: vt-slide-in-right 0.22s ease-out;
+}
+
+/* Thin scrollbars for list panes */
+.vt-scroll::-webkit-scrollbar {
+  width: 8px;
+}
+.vt-scroll::-webkit-scrollbar-thumb {
+  background: #3f3f46;
+  border-radius: 4px;
+}
+.vt-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Hide scrollbars on single-row strips (pills) while keeping scrollability */
+.vt-no-bar {
+  scrollbar-width: none;
+}
+.vt-no-bar::-webkit-scrollbar {
+  display: none;
+}
+
+/* Markdown preview (Tailwind preflight strips element styles) */
+.vt-md {
+  @apply text-sm leading-relaxed text-neutral-200;
+}
+.vt-md h1 {
+  @apply mb-2 mt-3 text-lg font-bold text-neutral-50;
+}
+.vt-md h2 {
+  @apply mb-2 mt-3 text-base font-bold text-neutral-50;
+}
+.vt-md h3 {
+  @apply mb-1 mt-2 text-sm font-bold text-neutral-100;
+}
+.vt-md p {
+  @apply my-1.5;
+}
+.vt-md ul {
+  @apply my-1.5 list-disc pl-5;
+}
+.vt-md ol {
+  @apply my-1.5 list-decimal pl-5;
+}
+.vt-md li {
+  @apply my-0.5;
+}
+.vt-md code {
+  @apply rounded bg-neutral-800 px-1 py-0.5 font-mono text-xs text-emerald-300;
+}
+.vt-md pre {
+  @apply my-2 overflow-x-auto rounded-md bg-neutral-900 p-3;
+}
+.vt-md pre code {
+  @apply bg-transparent p-0 text-neutral-200;
+}
+.vt-md blockquote {
+  @apply my-2 border-l-2 border-neutral-700 pl-3 text-neutral-400;
+}
+.vt-md a {
+  @apply text-emerald-400 underline;
+}
+.vt-md input[type="checkbox"] {
+  @apply mr-1.5 accent-emerald-500;
+}
+.vt-md hr {
+  @apply my-3 border-neutral-800;
 }
