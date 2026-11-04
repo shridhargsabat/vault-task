@@ -64,48 +64,6 @@ jobs:
       - name: cargo test
         working-directory: src-tauri
         run: cargo test
-      # TEMPORARY: re-scan imports after dialog cfg-out (named + ordinal).
-      - name: rescan missing imports
-        if: failure()
-        shell: python
-        run: |
-          import glob, os, subprocess, sys
-          subprocess.check_call(
-              [sys.executable, "-m", "pip", "install", "-q", "pefile"]
-          )
-          import pefile
-          exe = glob.glob(
-              "src-tauri/target/debug/deps/vault_task_lib-*.exe"
-          )[0]
-          pe = pefile.PE(exe)
-          sysdir = os.path.join(os.environ["SystemRoot"], "System32")
-          total_missing = 0
-          for entry in pe.DIRECTORY_ENTRY_IMPORT:
-              dll = entry.dll.decode()
-              if "taskdialog" in dll.lower():
-                  print("TASKDIALOG-RELATED DLL:", dll)
-              path = os.path.join(sysdir, dll)
-              if not os.path.exists(path):
-                  continue
-              dpe = pefile.PE(path)
-              names, ords = set(), set()
-              if hasattr(dpe, "DIRECTORY_ENTRY_EXPORT"):
-                  for sym in dpe.DIRECTORY_ENTRY_EXPORT.symbols:
-                      if sym.name:
-                          names.add(sym.name.decode().lower())
-                      ords.add(sym.ordinal)
-              for imp in entry.imports:
-                  if imp.name:
-                      n = imp.name.decode()
-                      if "taskdialog" in n.lower():
-                          print(f"STILL IMPORTED: {dll}!{n}")
-                      if n.lower() not in names:
-                          print(f"MISSING: {dll}!{n}")
-                          total_missing += 1
-                  elif imp.ordinal not in ords:
-                      print(f"MISSING-ORDINAL: {dll}#{imp.ordinal}")
-                      total_missing += 1
-          print("total missing:", total_missing)
       - uses: actions/setup-node@v4
         with:
           node-version: "22"

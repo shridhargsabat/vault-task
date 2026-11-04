@@ -13,15 +13,9 @@ use tauri::{Manager, WindowEvent};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let builder = tauri::Builder::default().plugin(tauri_plugin_opener::init());
-    // Native file dialogs (rfd) import TaskDialogIndirect, which exists
-    // only in comctl32 v6. App binaries carry tauri-build's SxS manifest,
-    // but the unit-test harness does not — linking the plugin there makes
-    // every test exe die at Windows startup (0xc0000139). Tests never
-    // touch dialogs, so the plugin ships in prod builds only.
-    #[cfg(not(test))]
-    let builder = builder.plugin(tauri_plugin_dialog::init());
-    builder
+    tauri::Builder::default()
+        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_positioner::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {

@@ -37,10 +37,11 @@ All notable changes to VaultTask are documented here. The format follows
 ### Fixed — Phase 8: Windows test-harness comctl32 crash
 
 - The dialog plugin (rfd) imports `TaskDialogIndirect` (comctl32
-  v6-only). App binaries carry tauri-build's SxS manifest, but the
-  unit-test harness does not — so Windows test exes died at startup
-  with `STATUS_ENTRYPOINT_NOT_FOUND`. Tests never touch dialogs, so
-  the plugin now ships in prod builds only (`#[cfg(not(test))]`)
+  v6-only). App binaries bind v6 via tauri-build's SxS manifest, but
+  the manifest-less unit-test harness bound v5 and died at Windows
+  startup with `STATUS_ENTRYPOINT_NOT_FOUND`. `build.rs` now
+  delay-loads `comctl32.dll` (stable plain link-args), deferring
+  import resolution to first call
 
 ## [0.1.0] - 2026-11-04
 
