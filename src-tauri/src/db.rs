@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS vault_meta (
     verifier_ciphertext BLOB NOT NULL,
     auto_lock_seconds INTEGER NOT NULL DEFAULT 300,
     lock_on_tray_hide INTEGER NOT NULL DEFAULT 0,
+    keyring_enabled INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL
 );
 
@@ -51,7 +52,23 @@ CREATE INDEX IF NOT EXISTS idx_tasks_status_updated ON tasks(status, updated_at 
 /// Run migrations / create tables if missing.
 pub fn init_db(conn: &Connection) -> Result<(), String> {
     conn.execute_batch(SCHEMA)
-        .map_err(|e| format!("db init: {e}"))
+        .map_err(|e| format!("db init: {e}"))?;
+    // Migration for pre-0.2 vaults: the duplicate-column error means the
+    // column is already there; anything else is a real failure.
+    match conn.execute(
+        "ALTER TABLE vault_meta ADD COLUMN keyring_enabled INTEGER NOT NULL DEFAULT 0",
+        [],
+    ) {
+        Ok(_) => Ok(()),
+        Err(rusqlite::Error::SqliteFailure(_, msg))
+            if msg
+                .as_deref()
+                .is_some_and(|m| m.contains("duplicate column")) =>
+        {
+            Ok(())
+        }
+        Err(e) => Err(format!("db migrate keyring_enabled: {e}")),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -64,11 +81,12 @@ pub struct VaultMeta {
     pub verifier_ciphertext: Vec<u8>,
     pub auto_lock_seconds: u64,
     pub lock_on_tray_hide: bool,
+    pub keyring_enabled: bool,
 }
 
 /// Raw `vault_meta` row: (kdf_salt, verifier_nonce, verifier_ciphertext,
-/// auto_lock_seconds, lock_on_tray_hide-as-int).
-type VaultMetaRow = (Vec<u8>, Vec<u8>, Vec<u8>, i64, i64);
+/// auto_lock_seconds, lock_on_tray_hide-as-int, keyring_enabled-as-int).
+type VaultMetaRow = (Vec<u8>, Vec<u8>, Vec<u8>, i64, i64, i64);
 /// Raw full `tasks` row (id, 6 encrypted blobs + nonces, status, priority,
 /// is_pinned, folder_id, tags_json, due_date, created_at, updated_at).
 type TaskRow = (
@@ -94,20 +112,28 @@ type RekeyRow = (String, Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>);
 pub fn get_vault_meta(conn: &Connection) -> Result<Option<VaultMeta>, String> {
     let row: Option<VaultMetaRow> = conn
         .query_row(
-            "SELECT kdf_salt, verifier_nonce, verifier_ciphertext, auto_lock_seconds, lock_on_tray_hide FROM vault_meta WHERE id = 1",
+            "SELECT kdf_salt, verifier_nonce, verifier_ciphertext, auto_lock_seconds, lock_on_tray_hide, keyring_enabled FROM vault_meta WHERE id = 1",
             [],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)),
         )
         .optional()
         .map_err(|e| format!("db read vault_meta: {e}"))?;
     Ok(row.map(
-        |(kdf_salt, verifier_nonce, verifier_ciphertext, auto_lock_seconds, lock_on_tray_hide)| {
+        |(
+            kdf_salt,
+            verifier_nonce,
+            verifier_ciphertext,
+            auto_lock_seconds,
+            lock_on_tray_hide,
+            keyring_enabled,
+        )| {
             VaultMeta {
                 kdf_salt,
                 verifier_nonce,
                 verifier_ciphertext,
                 auto_lock_seconds: auto_lock_seconds.max(0) as u64,
                 lock_on_tray_hide: lock_on_tray_hide != 0,
+                keyring_enabled: keyring_enabled != 0,
             }
         },
     ))
@@ -120,16 +146,18 @@ pub fn insert_vault_meta(
     verifier_ciphertext: &[u8],
     auto_lock_seconds: u64,
     lock_on_tray_hide: bool,
+    keyring_enabled: bool,
 ) -> Result<(), String> {
     let now = Utc::now().to_rfc3339();
     conn.execute(
-        "INSERT INTO vault_meta (id, kdf_salt, verifier_nonce, verifier_ciphertext, auto_lock_seconds, lock_on_tray_hide, created_at) VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6)",
+        "INSERT INTO vault_meta (id, kdf_salt, verifier_nonce, verifier_ciphertext, auto_lock_seconds, lock_on_tray_hide, keyring_enabled, created_at) VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7)",
         params![
             kdf_salt,
             verifier_nonce.as_slice(),
             verifier_ciphertext,
             auto_lock_seconds as i64,
             i64::from(lock_on_tray_hide),
+            i64::from(keyring_enabled),
             now,
         ],
     )
@@ -151,6 +179,16 @@ pub fn update_vault_settings(
     if n == 0 {
         return Err("vault is not initialized".to_string());
     }
+    Ok(())
+}
+
+/// Persist the OS-keyring quick-unlock flag.
+pub fn set_keyring_enabled(conn: &Connection, enabled: bool) -> Result<(), String> {
+    conn.execute(
+        "UPDATE vault_meta SET keyring_enabled = ?1 WHERE id = 1",
+        params![i64::from(enabled)],
+    )
+    .map_err(|e| format!("db set keyring_enabled: {e}"))?;
     Ok(())
 }
 
@@ -666,6 +704,7 @@ pub struct BackupMeta {
     pub verifier_ciphertext_b64: String,
     pub auto_lock_seconds: u64,
     pub lock_on_tray_hide: bool,
+    pub keyring_enabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -776,6 +815,7 @@ pub fn build_backup_payload(conn: &Connection) -> Result<BackupPayload, String> 
             verifier_ciphertext_b64: b64e(&meta.verifier_ciphertext),
             auto_lock_seconds: meta.auto_lock_seconds,
             lock_on_tray_hide: meta.lock_on_tray_hide,
+            keyring_enabled: meta.keyring_enabled,
         },
         tasks,
     })
@@ -861,13 +901,14 @@ pub fn restore_backup_payload(
     tx.execute("DELETE FROM vault_meta", [])
         .map_err(|e| format!("db restore clear meta: {e}"))?;
     tx.execute(
-        "INSERT INTO vault_meta (id, kdf_salt, verifier_nonce, verifier_ciphertext, auto_lock_seconds, lock_on_tray_hide, created_at) VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6)",
+        "INSERT INTO vault_meta (id, kdf_salt, verifier_nonce, verifier_ciphertext, auto_lock_seconds, lock_on_tray_hide, keyring_enabled, created_at) VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7)",
         params![
             salt,
             verifier_nonce,
             verifier_ct,
             payload.meta.auto_lock_seconds as i64,
             i64::from(payload.meta.lock_on_tray_hide),
+            i64::from(payload.meta.keyring_enabled),
             Utc::now().to_rfc3339(),
         ],
     )
@@ -1114,7 +1155,7 @@ mod tests {
         let salt = [21u8; 16];
         let key = derive_key("backup-fixture-pw", &salt).unwrap();
         let (ct, nonce) = encrypt_bytes(&key, VERIFIER_PLAINTEXT).unwrap();
-        insert_vault_meta(&conn, &salt, &nonce, &ct, 600, true).unwrap();
+        insert_vault_meta(&conn, &salt, &nonce, &ct, 600, true, false).unwrap();
         (conn, MasterKey(key))
     }
 
@@ -1203,6 +1244,7 @@ mod tests {
     #[test]
     fn backup_roundtrip_is_lossless() {
         let (conn_a, master) = backup_fixture();
+        set_keyring_enabled(&conn_a, true).unwrap();
         for (title, status, priority) in
             [("alpha task", "todo", 1), ("beta task", "in_progress", 4)]
         {
@@ -1233,6 +1275,7 @@ mod tests {
         let meta_b = get_vault_meta(&conn_b).unwrap().unwrap();
         assert_eq!(meta_b.auto_lock_seconds, 600);
         assert!(meta_b.lock_on_tray_hide);
+        assert!(meta_b.keyring_enabled);
         let before = serde_json::to_value(list_tasks(&conn_a, &master).unwrap()).unwrap();
         let after = serde_json::to_value(list_tasks(&conn_b, &master).unwrap()).unwrap();
         assert_eq!(before, after);
@@ -1279,5 +1322,27 @@ mod tests {
             "hello-world-abc123de.md"
         );
         assert_eq!(slugify_filename("!!!", "id"), "task-id.md");
+    }
+
+    #[test]
+    fn init_db_migrates_pre_keyring_vaults() {
+        let conn = Connection::open_in_memory().unwrap();
+        // Simulate a v0.1 database: vault_meta WITHOUT keyring_enabled.
+        conn.execute_batch(
+            "CREATE TABLE vault_meta (id INTEGER PRIMARY KEY CHECK (id = 1), kdf_salt BLOB NOT NULL, verifier_nonce BLOB NOT NULL, verifier_ciphertext BLOB NOT NULL, auto_lock_seconds INTEGER NOT NULL DEFAULT 300, lock_on_tray_hide INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL); CREATE TABLE tasks (id TEXT PRIMARY KEY, encrypted_title BLOB NOT NULL, title_nonce BLOB NOT NULL, encrypted_note BLOB NOT NULL, note_nonce BLOB NOT NULL, encrypted_subtasks BLOB NOT NULL, subtasks_nonce BLOB NOT NULL, status TEXT NOT NULL DEFAULT 'todo', priority INTEGER NOT NULL DEFAULT 2, is_pinned INTEGER NOT NULL DEFAULT 0, folder_id TEXT DEFAULT 'inbox', tags_json TEXT NOT NULL DEFAULT '[]', due_date TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);",
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO vault_meta (id, kdf_salt, verifier_nonce, verifier_ciphertext, created_at) VALUES (1, x'00', x'01', x'02', 't')",
+            [],
+        )
+        .unwrap();
+        init_db(&conn).unwrap();
+        // Second init must also pass (duplicate-column tolerated).
+        init_db(&conn).unwrap();
+        let meta = get_vault_meta(&conn).unwrap().unwrap();
+        assert!(!meta.keyring_enabled);
+        set_keyring_enabled(&conn, true).unwrap();
+        assert!(get_vault_meta(&conn).unwrap().unwrap().keyring_enabled);
     }
 }
