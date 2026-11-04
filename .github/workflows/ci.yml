@@ -64,6 +64,18 @@ jobs:
       - name: cargo test
         working-directory: src-tauri
         run: cargo test
+      # TEMPORARY: diagnose STATUS_ENTRYPOINT_NOT_FOUND (0xc0000139).
+      - name: diagnose missing imports
+        if: failure()
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri https://github.com/lucasg/Dependencies/releases/download/v1.11.1/Dependencies_x64_Release.zip -OutFile deps.zip
+          Expand-Archive deps.zip -DestinationPath deps
+          $exe = Get-ChildItem src-tauri/target/debug/deps/vault_task_lib-*.exe | Select-Object -First 1
+          Write-Host "exe=$($exe.FullName)"
+          .\deps\Dependencies.exe -chain $exe.FullName
+          Write-Host "=== direct imports ==="
+          .\deps\Dependencies.exe -imports $exe.FullName | Select-String -Pattern '\(\!\)|Missing|Error' | Select-Object -First 40
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
