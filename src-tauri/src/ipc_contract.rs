@@ -30,11 +30,20 @@ mod tests {
     }
 
     fn request(cmd: &str, body: serde_json::Value) -> InvokeRequest {
+        // Mirror tauri::protocol::origin: WebView2 (Windows) serves the app
+        // over http://<scheme>.localhost instead of a custom protocol.
+        // A hardcoded tauri://localhost is treated as REMOTE there, which
+        // trips the ACL gate ("not allowed. Plugin not found") in mock tests.
+        let url = if cfg!(any(windows, target_os = "android")) {
+            "http://tauri.localhost"
+        } else {
+            "tauri://localhost"
+        };
         InvokeRequest {
             cmd: cmd.into(),
             callback: tauri::ipc::CallbackFn(0),
             error: tauri::ipc::CallbackFn(1),
-            url: "tauri://localhost".parse().unwrap(),
+            url: url.parse().unwrap(),
             body: tauri::ipc::InvokeBody::Json(body),
             headers: Default::default(),
             invoke_key: INVOKE_KEY.to_string(),
