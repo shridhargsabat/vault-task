@@ -3,6 +3,26 @@
 Tauri v2 (Rust + React 18 + TypeScript + Tailwind + Zustand) desktop app for
 Windows 11, Ubuntu 24.04+, and Fedora 41+.
 
+## Release
+
+CI (`ci.yml`) runs on every push to `main` and every PR targeting `main`:
+Rust fmt + clippy + tests, typecheck + Vite build, a Windows test job,
+and `cargo deny`.
+
+To cut a release, bump the version in `src-tauri/Cargo.toml`,
+`src-tauri/tauri.conf.json`, and `package.json` (all three must match),
+then tag and push:
+
+```bash
+git tag v0.2.0 && git push origin v0.2.0
+```
+
+Pushing a `v*` tag runs `release.yml`: it verifies the tag matches all
+three package versions, builds `.msi` + `-setup.exe` on Windows,
+`.deb` + `.AppImage` on Ubuntu 24.04, and `.rpm` for Fedora (with an
+`rpm -qpR` dependency check), then publishes all five installers plus
+`SHA256SUMS.txt` to a GitHub Release.
+
 ## Phase 7 — OS keyring quick-unlock ✅
 
 - `keyring` crate (Windows Credential Manager / Secret Service via

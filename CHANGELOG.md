@@ -25,6 +25,24 @@ All notable changes to VaultTask are documented here. The format follows
   graceful fallback to PIN with a clear message when the keyring
   daemon is locked or unavailable
 
+### Changed — Phase 8: CI/CD to spec
+
+- CI on pinned `ubuntu-24.04` plus a new `windows-latest` test job
+  (`cargo test`, typecheck, Vite build); PRs targeting `main` only
+- Release pipeline split into `build-windows` (msi,nsis),
+  `build-ubuntu` (deb,appimage), and `build-fedora` (rpm with an
+  `rpm -qpR` dependency check); publish attaches all five installers
+  plus `SHA256SUMS.txt` with unmatched-files failure enabled
+
+### Fixed — Phase 8: Windows test-harness comctl32 crash
+
+- The dialog plugin (rfd) imports `TaskDialogIndirect` (comctl32
+  v6-only). App binaries bind v6 via tauri-build's SxS manifest, but
+  the manifest-less unit-test harness bound v5 and died at Windows
+  startup with `STATUS_ENTRYPOINT_NOT_FOUND`. `build.rs` now
+  delay-loads `comctl32.dll` (stable plain link-args), deferring
+  import resolution to first call
+
 ## [0.1.0] - 2026-11-04
 
 First release: encrypted tray task manager with Markdown notes for
