@@ -34,6 +34,14 @@ All notable changes to VaultTask are documented here. The format follows
   `rpm -qpR` dependency check); publish attaches all five installers
   plus `SHA256SUMS.txt` with unmatched-files failure enabled
 
+### Fixed — Phase 8: Windows comctl32 v6 manifest
+
+- Windows binaries now embed an SxS manifest for Common Controls 6:
+  rfd imports `TaskDialogIndirect` (v6-only), and without the manifest
+  the loader binds comctl32 v5 so every exe died at startup with
+  `STATUS_ENTRYPOINT_NOT_FOUND` — latent in the v0.1.0 installers,
+  caught by the new Windows CI job
+
 ## [0.1.0] - 2026-11-04
 
 First release: encrypted tray task manager with Markdown notes for
