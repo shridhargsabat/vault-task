@@ -8,7 +8,7 @@
 
 [![CI](https://github.com/shridhargsabat/vault-task/actions/workflows/ci.yml/badge.svg)](https://github.com/shridhargsabat/vault-task/actions/workflows/ci.yml)
 [![Latest release](https://img.shields.io/github/v/release/shridhargsabat/vault-task)](https://github.com/shridhargsabat/vault-task/releases/latest)
-[![License](https://img.shields.io/github/license/shridhargsabat/vault-task)](LICENSE)
+[![License: MIT OR Apache-2.0](https://img.shields.io/badge/License-MIT_OR_Apache--2.0-blue.svg)](LICENSE)
 [![Tauri](https://img.shields.io/badge/Tauri-v2-blue)](https://v2.tauri.app)
 [![Rust](https://img.shields.io/badge/Rust-stable-orange)](https://www.rust-lang.org)
 [![Platforms](https://img.shields.io/badge/Win_11_%7C_Ubuntu_24.04%2B_%7C_Fedora_41%2B-lightgrey)](https://github.com/shridhargsabat/vault-task/releases/latest)
@@ -42,15 +42,17 @@ wipes keys from memory — D-Bus session lock included on Linux.
 
 ## Download & install
 
-Grab the latest release for your OS (verify with `SHA256SUMS.txt` —
+Grab the latest release for your OS (verify with
+[`SHA256SUMS.txt`](https://github.com/shridhargsabat/vault-task/releases/latest/download/SHA256SUMS.txt) —
 every asset is minisign-signed and the app re-verifies before installing):
 
 | OS | Format | Install |
 |---|---|---|
-| Windows 11 | `.msi` ✅ | Download → double-click (assisted in-app updates) |
-| Windows 11 | `-setup.exe` (NSIS) ⏸️ | Full updater support; returns after the msi+rpm test track — meanwhile [v0.4.1](https://github.com/shridhargsabat/vault-task/releases/tag/v0.4.1) |
-| Ubuntu 24.04+ | `.deb` / `.AppImage` ⏸️ | Paused during the msi+rpm test track — meanwhile [v0.4.1](https://github.com/shridhargsabat/vault-task/releases/tag/v0.4.1) |
-| Fedora 41+ | `.rpm` ✅ | `sudo dnf install -y ./VaultTask-*.rpm` (self-updates via PackageKit) |
+| Windows 11 | [`.msi`](https://github.com/shridhargsabat/vault-task/releases/latest/download/VaultTask_0.4.4_x64_en-US.msi) ✅ | Download → double-click (assisted in-app updates) |
+| Windows 11 | [`-setup.exe`](https://github.com/shridhargsabat/vault-task/releases/latest/download/VaultTask_0.4.4_x64-setup.exe) ✅ (NSIS) | Full updater support with silent auto-updates |
+| Ubuntu 24.04+ | [`.deb`](https://github.com/shridhargsabat/vault-task/releases/latest/download/VaultTask_0.4.4_amd64.deb) ✅ | `sudo apt install -y ./VaultTask-*.deb` (self-updates via PackageKit) |
+| Ubuntu 24.04+ | [`.AppImage`](https://github.com/shridhargsabat/vault-task/releases/latest/download/VaultTask_0.4.4_amd64.AppImage) ✅ | `chmod +x` → run (needs `libfuse2`; full updater support) |
+| Fedora 41+ | [`.rpm`](https://github.com/shridhargsabat/vault-task/releases/latest/download/VaultTask-0.4.4-1.x86_64.rpm) ✅ | `sudo dnf install -y ./VaultTask-*.rpm` (self-updates via PackageKit) |
 
 ```bash
 # Verify any download (Linux):
