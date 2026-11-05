@@ -33,12 +33,12 @@ jobs:
           [ "v$NPM_VER" = "$TAG" ] || { echo "tag does not match package.json version"; exit 1; }
 
   build-windows:
-    name: bundle msi on windows
+    name: bundle msi,nsis on windows
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - name: WiX
-        run: choco install wixtoolset -y
+      - name: NSIS + WiX
+        run: choco install nsis wixtoolset -y
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-node@v4
         with:
@@ -53,11 +53,47 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: npx tauri build --bundles msi
+        run: npx tauri build --bundles msi,nsis
       - uses: actions/upload-artifact@v4
         with:
           name: bundles-Windows
-          path: src-tauri/target/release/bundle/**/*.msi
+          path: |
+            src-tauri/target/release/bundle/**/*.msi
+            src-tauri/target/release/bundle/**/*.exe
+            src-tauri/target/release/bundle/**/*.sig
+          if-no-files-found: error
+
+  build-ubuntu:
+    name: bundle deb,appimage on ubuntu
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: system deps (Tauri WebKitGTK + bundling tools)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf file
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: npm ci
+      - name: build bundles
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: npx tauri build --bundles deb,appimage
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bundles-Ubuntu
+          path: |
+            src-tauri/target/release/bundle/**/*.deb
+            src-tauri/target/release/bundle/**/*.AppImage
+            src-tauri/target/release/bundle/**/*.sig
           if-no-files-found: error
 
   build-fedora:
@@ -104,7 +140,7 @@ jobs:
 
   publish:
     name: publish release
-    needs: [preflight, build-windows, build-fedora]
+    needs: [preflight, build-windows, build-ubuntu, build-fedora]
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-24.04
     steps:
@@ -123,7 +159,7 @@ jobs:
         shell: bash
         run: |
           cd artifacts
-          sha256sum *.msi *.rpm > SHA256SUMS.txt
+          sha256sum *.msi *.exe *.deb *.rpm *.AppImage > SHA256SUMS.txt
           cat SHA256SUMS.txt
       # tauri-bundler signs updater targets (nsis/appimage/deb/msi) but NOT
       # the rpm — and the Fedora upload only ships *.rpm. Sign it here with
@@ -162,7 +198,8 @@ jobs:
       # signatures are the raw .sig bytes, URLs are per-tag downloads.
       # Lenient by design: each platform/package is included only when its
       # artifact + .sig are present, so the release can ship any bundle
-      # subset (currently msi + rpm) without breaking the manifests.
+      # subset without breaking the manifests (full matrix: msi + nsis
+      # + deb + rpm + appimage).
       - name: generate updater manifest
         shell: bash
         env:
