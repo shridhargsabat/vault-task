@@ -60,9 +60,7 @@ jobs:
           path: |
             src-tauri/target/release/bundle/**/*.msi
             src-tauri/target/release/bundle/**/*.exe
-            src-tauri/target/release/bundle/**/*.zip
             src-tauri/target/release/bundle/**/*.sig
-            src-tauri/target/release/bundle/**/latest.json
           if-no-files-found: error
 
   build-ubuntu:
@@ -95,9 +93,7 @@ jobs:
           path: |
             src-tauri/target/release/bundle/**/*.deb
             src-tauri/target/release/bundle/**/*.AppImage
-            src-tauri/target/release/bundle/**/*.tar.gz
             src-tauri/target/release/bundle/**/*.sig
-            src-tauri/target/release/bundle/**/latest.json
           if-no-files-found: error
 
   build-fedora:
@@ -154,25 +150,6 @@ jobs:
           path: artifacts
           pattern: bundles-*
           merge-multiple: true
-      # Each platform build emits its own latest.json (single-platform entry).
-      # Merge them BEFORE flattening (identical filenames would collide).
-      - name: merge updater manifests
-        shell: bash
-        run: |
-          mapfile -t MANIFESTS < <(find artifacts -mindepth 2 -name latest.json | sort)
-          echo "manifests: ${MANIFESTS[*]}"
-          [ "${#MANIFESTS[@]}" -ge 1 ] || { echo "no latest.json found"; exit 1; }
-          jq -s '{version: .[0].version, notes: .[0].notes, pub_date: .[0].pub_date, platforms: (map(.platforms) | add)}' \
-            "${MANIFESTS[@]}" > artifacts/latest.json
-          # Release notes for the in-app updater, from this version's CHANGELOG section.
-          VER=$(jq -r .version artifacts/latest.json)
-          NOTES=$(awk "/^## \[$VER\]/{flag=1;next}/^## \[/{flag=0}flag" CHANGELOG.md | head -c 4000)
-          [ -n "$NOTES" ] || NOTES="VaultTask $VER — see GitHub Releases for details."
-          jq --arg notes "$NOTES" '.notes = $notes' artifacts/latest.json > artifacts/latest.json.new
-          mv artifacts/latest.json.new artifacts/latest.json
-          jq -e '.platforms | length >= 1' artifacts/latest.json
-          cat artifacts/latest.json
-          rm "${MANIFESTS[@]}"
       - name: flatten per-format subdirectories
         shell: bash
         run: |
@@ -184,6 +161,40 @@ jobs:
           cd artifacts
           sha256sum *.msi *.exe *.deb *.rpm *.AppImage > SHA256SUMS.txt
           cat SHA256SUMS.txt
+      # The v2 updater installs bundles directly (nsis/appimage are
+      # self-contained), so the bundler emits only .sig sidecars — no
+      # latest.json. Generate the manifest here (tauri-action style):
+      # signatures are the raw .sig bytes, URLs are per-tag downloads.
+      - name: generate updater manifest
+        shell: bash
+        env:
+          REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -u
+          mapfile -t EXES < <(ls artifacts/*-setup.exe)
+          mapfile -t APPS < <(ls artifacts/*.AppImage)
+          [ "${#EXES[@]}" -eq 1 ] || { echo "expected 1 setup.exe, found ${#EXES[@]}"; exit 1; }
+          [ "${#APPS[@]}" -eq 1 ] || { echo "expected 1 AppImage, found ${#APPS[@]}"; exit 1; }
+          [ -f "${EXES[0]}.sig" ] || { echo "missing ${EXES[0]}.sig"; exit 1; }
+          [ -f "${APPS[0]}.sig" ] || { echo "missing ${APPS[0]}.sig"; exit 1; }
+          VER="${TAG#v}"
+          PUB_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          NOTES=$(awk "/^## \[$VER\]/{flag=1;next}/^## \[/{flag=0}flag" CHANGELOG.md | head -c 4000)
+          [ -n "$NOTES" ] || NOTES="VaultTask $VER — see GitHub Releases for details."
+          jq -n \
+            --arg version "$VER" --arg notes "$NOTES" --arg pub_date "$PUB_DATE" \
+            --arg win_sig "$(cat "${EXES[0]}.sig")" \
+            --arg win_url "https://github.com/$REPO/releases/download/$TAG/$(basename "${EXES[0]}")" \
+            --arg linux_sig "$(cat "${APPS[0]}.sig")" \
+            --arg linux_url "https://github.com/$REPO/releases/download/$TAG/$(basename "${APPS[0]}")" \
+            '{version: $version, notes: $notes, pub_date: $pub_date,
+              platforms: {
+                "windows-x86_64": {signature: $win_sig, url: $win_url},
+                "linux-x86_64": {signature: $linux_sig, url: $linux_url}}}' \
+            > artifacts/latest.json
+          jq -e '.version and (.platforms | length == 2)' artifacts/latest.json
+          cat artifacts/latest.json
       - name: publish
         uses: softprops/action-gh-release@v2
         with:
