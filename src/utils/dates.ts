@@ -47,3 +47,22 @@ export function formatDue(iso: string | null | undefined): string {
   });
   return isOverdue(iso) ? `Overdue ${label}` : label;
 }
+
+/** Reminder label: "No reminder" / "Today 2:30 PM" / "Tomorrow 9:00 AM" / "Nov 10, 9:00 AM". */
+export function formatReminder(iso: string | null | undefined): string {
+  if (!iso) return "No reminder";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const time = d.toLocaleTimeString(undefined, {
+    hour: "numeric",
+    minute: "2-digit",
+  });
+  const day = toISODate(d);
+  if (day === todayISO()) return `Today ${time}`;
+  if (day === addDaysISO(1)) return `Tomorrow ${time}`;
+  const date = d.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+  });
+  return `${date}, ${time}`;
+}

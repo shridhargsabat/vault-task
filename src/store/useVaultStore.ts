@@ -44,6 +44,7 @@ interface VaultState {
   updateSecuritySettings: (
     autoLockSeconds: number,
     lockOnTrayHide: boolean,
+    hideNotificationPreview: boolean,
   ) => Promise<boolean>;
   changePassword: (oldPassword: string, newPassword: string) => Promise<boolean>;
   autostartEnabled: boolean | null;
@@ -71,6 +72,10 @@ function applyPatch(t: Task, patch: UpdateTaskInput): Task {
     ...(patch.folder_id !== undefined ? { folder_id: patch.folder_id } : {}),
     ...(patch.tags !== undefined ? { tags: patch.tags } : {}),
     ...(patch.due_date !== undefined ? { due_date: patch.due_date } : {}),
+    // Re-arming a reminder clears the fired flag (mirrors backend).
+    ...(patch.reminder_at !== undefined
+      ? { reminder_at: patch.reminder_at, reminder_fired: false }
+      : {}),
   };
 }
 
@@ -162,6 +167,7 @@ export const useVaultStore = create<VaultState>((set, get) => ({
         folder_id: input.folder_id,
         tags: input.tags,
         due_date: input.due_date ?? null,
+        reminder_at: input.reminder_at ?? null,
       });
       set((s) => ({ tasks: [task, ...s.tasks], error: null }));
       return task;
@@ -176,12 +182,13 @@ export const useVaultStore = create<VaultState>((set, get) => ({
       tasks: s.tasks.map((t) => (t.id === id ? applyPatch(t, patch) : t)),
     }));
     try {
-      const { due_date, ...rest } = patch;
+      const { due_date, reminder_at, ...rest } = patch;
       const updated = await invoke<Task>("update_task", {
         id,
         ...rest,
         // Backend clears the date on empty string; null would mean "unchanged".
         ...(due_date !== undefined ? { due_date: due_date ?? "" } : {}),
+        ...(reminder_at !== undefined ? { reminder_at: reminder_at ?? "" } : {}),
       });
       set((s) => ({
         tasks: s.tasks.map((t) => (t.id === id ? updated : t)),
@@ -219,11 +226,12 @@ export const useVaultStore = create<VaultState>((set, get) => ({
     });
   },
 
-  updateSecuritySettings: async (autoLockSeconds, lockOnTrayHide) => {
+  updateSecuritySettings: async (autoLockSeconds, lockOnTrayHide, hideNotificationPreview) => {
     try {
       const status = await invoke<VaultStatus>("update_security_settings", {
         auto_lock_seconds: autoLockSeconds,
         lock_on_tray_hide: lockOnTrayHide,
+        hide_notification_preview: hideNotificationPreview,
       });
       set({ status, error: null });
       return true;

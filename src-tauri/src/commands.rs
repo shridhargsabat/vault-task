@@ -30,6 +30,7 @@ pub struct VaultStatus {
     pub auto_lock_seconds: u64,
     pub lock_on_tray_hide: bool,
     pub keyring_enabled: bool,
+    pub hide_notification_preview: bool,
 }
 
 fn open_db(state: &State<AppState>) -> Result<Connection, String> {
@@ -72,6 +73,7 @@ fn current_status(conn: &Connection, state: &State<AppState>) -> Result<VaultSta
             auto_lock_seconds: m.auto_lock_seconds,
             lock_on_tray_hide: m.lock_on_tray_hide,
             keyring_enabled: m.keyring_enabled,
+            hide_notification_preview: m.hide_notification_preview,
         }),
         None => Ok(VaultStatus {
             initialized: false,
@@ -79,6 +81,7 @@ fn current_status(conn: &Connection, state: &State<AppState>) -> Result<VaultSta
             auto_lock_seconds: session.auto_lock_seconds,
             lock_on_tray_hide: session.lock_on_tray_hide,
             keyring_enabled: false,
+            hide_notification_preview: true,
         }),
     }
 }
@@ -109,6 +112,7 @@ pub fn setup_vault(state: State<AppState>, password: String) -> Result<VaultStat
         DEFAULT_AUTO_LOCK_SECONDS,
         false,
         false,
+        true,
     )?;
     {
         let mut session = state
@@ -168,6 +172,7 @@ pub fn update_security_settings(
     state: State<AppState>,
     auto_lock_seconds: u64,
     lock_on_tray_hide: bool,
+    hide_notification_preview: bool,
 ) -> Result<VaultStatus, String> {
     if !(30..=3600).contains(&auto_lock_seconds) {
         return Err("auto-lock timeout must be between 30s and 3600s".to_string());
@@ -175,7 +180,12 @@ pub fn update_security_settings(
     // Changing security posture requires an unlocked vault.
     require_master(&state)?;
     let conn = open_db(&state)?;
-    update_vault_settings(&conn, auto_lock_seconds, lock_on_tray_hide)?;
+    update_vault_settings(
+        &conn,
+        auto_lock_seconds,
+        lock_on_tray_hide,
+        hide_notification_preview,
+    )?;
     {
         let mut session = state
             .session
@@ -260,6 +270,7 @@ pub fn create_task(
     folder_id: Option<String>,
     tags: Option<Vec<String>>,
     due_date: Option<String>,
+    reminder_at: Option<String>,
 ) -> Result<Task, String> {
     let master = require_master(&state)?;
     let conn = open_db(&state)?;
@@ -274,6 +285,7 @@ pub fn create_task(
             folder_id,
             tags,
             due_date,
+            reminder_at,
         },
     )
 }
@@ -292,6 +304,7 @@ pub fn update_task(
     folder_id: Option<String>,
     tags: Option<Vec<String>>,
     due_date: Option<String>,
+    reminder_at: Option<String>,
 ) -> Result<Task, String> {
     let master = require_master(&state)?;
     let conn = open_db(&state)?;
@@ -309,6 +322,7 @@ pub fn update_task(
             folder_id,
             tags,
             due_date,
+            reminder_at,
         },
     )
 }

@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS vault_meta (
     auto_lock_seconds INTEGER NOT NULL DEFAULT 300,
     lock_on_tray_hide INTEGER NOT NULL DEFAULT 0,
     keyring_enabled INTEGER NOT NULL DEFAULT 0,
+    hide_notification_preview INTEGER NOT NULL DEFAULT 1,
     created_at TEXT NOT NULL
 );
 
@@ -42,6 +43,8 @@ CREATE TABLE IF NOT EXISTS tasks (
     folder_id TEXT DEFAULT 'inbox',
     tags_json TEXT NOT NULL DEFAULT '[]',
     due_date TEXT,
+    reminder_at TEXT,
+    reminder_fired INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -53,22 +56,42 @@ CREATE INDEX IF NOT EXISTS idx_tasks_status_updated ON tasks(status, updated_at 
 pub fn init_db(conn: &Connection) -> Result<(), String> {
     conn.execute_batch(SCHEMA)
         .map_err(|e| format!("db init: {e}"))?;
-    // Migration for pre-0.2 vaults: the duplicate-column error means the
-    // column is already there; anything else is a real failure.
-    match conn.execute(
-        "ALTER TABLE vault_meta ADD COLUMN keyring_enabled INTEGER NOT NULL DEFAULT 0",
-        [],
-    ) {
-        Ok(_) => Ok(()),
-        Err(rusqlite::Error::SqliteFailure(_, msg))
-            if msg
-                .as_deref()
-                .is_some_and(|m| m.contains("duplicate column")) =>
-        {
-            Ok(())
+    // Migrations for pre-existing vaults: the duplicate-column error means
+    // the column is already there; anything else is a real failure.
+    for (name, ddl) in [
+        (
+            "keyring_enabled",
+            "ALTER TABLE vault_meta ADD COLUMN keyring_enabled INTEGER NOT NULL DEFAULT 0",
+        ),
+        (
+            "hide_notification_preview",
+            "ALTER TABLE vault_meta ADD COLUMN hide_notification_preview INTEGER NOT NULL DEFAULT 1",
+        ),
+        (
+            "reminder_at",
+            "ALTER TABLE tasks ADD COLUMN reminder_at TEXT",
+        ),
+        (
+            "reminder_fired",
+            "ALTER TABLE tasks ADD COLUMN reminder_fired INTEGER NOT NULL DEFAULT 0",
+        ),
+    ] {
+        match conn.execute(ddl, []) {
+            Ok(_) => {}
+            Err(rusqlite::Error::SqliteFailure(_, msg))
+                if msg
+                    .as_deref()
+                    .is_some_and(|m| m.contains("duplicate column")) => {}
+            Err(e) => return Err(format!("db migrate {name}: {e}")),
         }
-        Err(e) => Err(format!("db migrate keyring_enabled: {e}")),
     }
+    // After the ALTERs: the 15s reminder poll filters on these columns.
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_tasks_reminder_fired ON tasks(reminder_fired, reminder_at)",
+        [],
+    )
+    .map_err(|e| format!("db init reminder index: {e}"))?;
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -82,13 +105,16 @@ pub struct VaultMeta {
     pub auto_lock_seconds: u64,
     pub lock_on_tray_hide: bool,
     pub keyring_enabled: bool,
+    pub hide_notification_preview: bool,
 }
 
 /// Raw `vault_meta` row: (kdf_salt, verifier_nonce, verifier_ciphertext,
-/// auto_lock_seconds, lock_on_tray_hide-as-int, keyring_enabled-as-int).
-type VaultMetaRow = (Vec<u8>, Vec<u8>, Vec<u8>, i64, i64, i64);
+/// auto_lock_seconds, lock_on_tray_hide-as-int, keyring_enabled-as-int,
+/// hide_notification_preview-as-int).
+type VaultMetaRow = (Vec<u8>, Vec<u8>, Vec<u8>, i64, i64, i64, i64);
 /// Raw full `tasks` row (id, 6 encrypted blobs + nonces, status, priority,
-/// is_pinned, folder_id, tags_json, due_date, created_at, updated_at).
+/// is_pinned, folder_id, tags_json, due_date, reminder_at,
+/// reminder_fired-as-int, created_at, updated_at).
 type TaskRow = (
     String,
     Vec<u8>,
@@ -103,6 +129,8 @@ type TaskRow = (
     Option<String>,
     String,
     Option<String>,
+    Option<String>,
+    i64,
     String,
     String,
 );
@@ -112,9 +140,9 @@ type RekeyRow = (String, Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>);
 pub fn get_vault_meta(conn: &Connection) -> Result<Option<VaultMeta>, String> {
     let row: Option<VaultMetaRow> = conn
         .query_row(
-            "SELECT kdf_salt, verifier_nonce, verifier_ciphertext, auto_lock_seconds, lock_on_tray_hide, keyring_enabled FROM vault_meta WHERE id = 1",
+            "SELECT kdf_salt, verifier_nonce, verifier_ciphertext, auto_lock_seconds, lock_on_tray_hide, keyring_enabled, hide_notification_preview FROM vault_meta WHERE id = 1",
             [],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?)),
         )
         .optional()
         .map_err(|e| format!("db read vault_meta: {e}"))?;
@@ -126,6 +154,7 @@ pub fn get_vault_meta(conn: &Connection) -> Result<Option<VaultMeta>, String> {
             auto_lock_seconds,
             lock_on_tray_hide,
             keyring_enabled,
+            hide_notification_preview,
         )| {
             VaultMeta {
                 kdf_salt,
@@ -134,11 +163,13 @@ pub fn get_vault_meta(conn: &Connection) -> Result<Option<VaultMeta>, String> {
                 auto_lock_seconds: auto_lock_seconds.max(0) as u64,
                 lock_on_tray_hide: lock_on_tray_hide != 0,
                 keyring_enabled: keyring_enabled != 0,
+                hide_notification_preview: hide_notification_preview != 0,
             }
         },
     ))
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn insert_vault_meta(
     conn: &Connection,
     kdf_salt: &[u8],
@@ -147,10 +178,11 @@ pub fn insert_vault_meta(
     auto_lock_seconds: u64,
     lock_on_tray_hide: bool,
     keyring_enabled: bool,
+    hide_notification_preview: bool,
 ) -> Result<(), String> {
     let now = Utc::now().to_rfc3339();
     conn.execute(
-        "INSERT INTO vault_meta (id, kdf_salt, verifier_nonce, verifier_ciphertext, auto_lock_seconds, lock_on_tray_hide, keyring_enabled, created_at) VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        "INSERT INTO vault_meta (id, kdf_salt, verifier_nonce, verifier_ciphertext, auto_lock_seconds, lock_on_tray_hide, keyring_enabled, hide_notification_preview, created_at) VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
         params![
             kdf_salt,
             verifier_nonce.as_slice(),
@@ -158,6 +190,7 @@ pub fn insert_vault_meta(
             auto_lock_seconds as i64,
             i64::from(lock_on_tray_hide),
             i64::from(keyring_enabled),
+            i64::from(hide_notification_preview),
             now,
         ],
     )
@@ -169,11 +202,16 @@ pub fn update_vault_settings(
     conn: &Connection,
     auto_lock_seconds: u64,
     lock_on_tray_hide: bool,
+    hide_notification_preview: bool,
 ) -> Result<(), String> {
     let n = conn
         .execute(
-            "UPDATE vault_meta SET auto_lock_seconds = ?1, lock_on_tray_hide = ?2 WHERE id = 1",
-            params![auto_lock_seconds as i64, i64::from(lock_on_tray_hide)],
+            "UPDATE vault_meta SET auto_lock_seconds = ?1, lock_on_tray_hide = ?2, hide_notification_preview = ?3 WHERE id = 1",
+            params![
+                auto_lock_seconds as i64,
+                i64::from(lock_on_tray_hide),
+                i64::from(hide_notification_preview)
+            ],
         )
         .map_err(|e| format!("db update settings: {e}"))?;
     if n == 0 {
@@ -215,6 +253,8 @@ pub struct Task {
     pub folder_id: String,
     pub tags: Vec<String>,
     pub due_date: Option<String>,
+    pub reminder_at: Option<String>,
+    pub reminder_fired: bool,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -228,6 +268,7 @@ pub struct CreateTaskInput {
     pub folder_id: Option<String>,
     pub tags: Option<Vec<String>>,
     pub due_date: Option<String>,
+    pub reminder_at: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -242,6 +283,9 @@ pub struct UpdateTaskPatch {
     pub tags: Option<Vec<String>>,
     /// None = leave unchanged; Some("") = clear; Some(date) = set.
     pub due_date: Option<String>,
+    /// None = leave unchanged; Some("") = clear; Some(ts) = set + reset
+    /// reminder_fired so the scheduler fires the new time.
+    pub reminder_at: Option<String>,
 }
 
 fn validate_status(status: &str) -> Result<(), String> {
@@ -259,6 +303,23 @@ fn validate_priority(priority: i32) -> Result<(), String> {
     } else {
         Err(format!("invalid priority {priority}: expected 1..=4"))
     }
+}
+
+/// Parse a user-supplied reminder timestamp (RFC 3339, any offset) and
+/// return the canonical UTC `…Z` form. Canonical storage keeps the
+/// scheduler's lexicographic `reminder_at <= now` comparison valid —
+/// mixed `Z`/`+00:00` suffixes would NOT sort consistently.
+pub fn normalize_reminder_at(raw: &str) -> Result<String, String> {
+    use chrono::SecondsFormat;
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err("reminder time must not be empty".to_string());
+    }
+    let dt = chrono::DateTime::parse_from_rfc3339(trimmed)
+        .map_err(|_| format!("invalid reminder time '{trimmed}': expected ISO-8601"))?;
+    Ok(dt
+        .with_timezone(&Utc)
+        .to_rfc3339_opts(SecondsFormat::Secs, true))
 }
 
 fn nonce_from_slice(bytes: &[u8]) -> Result<[u8; 12], String> {
@@ -286,6 +347,8 @@ fn decrypt_task_row(
     folder_id: Option<String>,
     tags_json: String,
     due_date: Option<String>,
+    reminder_at: Option<String>,
+    reminder_fired: i64,
     created_at: String,
     updated_at: String,
 ) -> Result<Task, String> {
@@ -309,6 +372,8 @@ fn decrypt_task_row(
         folder_id: folder_id.unwrap_or_else(|| "inbox".to_string()),
         tags,
         due_date,
+        reminder_at,
+        reminder_fired: reminder_fired != 0,
         created_at,
         updated_at,
     })
@@ -318,7 +383,7 @@ pub fn list_tasks(conn: &Connection, master: &MasterKey) -> Result<Vec<Task>, St
     let key = master.as_bytes();
     let mut stmt = conn
         .prepare(
-            "SELECT id, encrypted_title, title_nonce, encrypted_note, note_nonce, encrypted_subtasks, subtasks_nonce, status, priority, is_pinned, folder_id, tags_json, due_date, created_at, updated_at FROM tasks ORDER BY is_pinned DESC, updated_at DESC",
+            "SELECT id, encrypted_title, title_nonce, encrypted_note, note_nonce, encrypted_subtasks, subtasks_nonce, status, priority, is_pinned, folder_id, tags_json, due_date, reminder_at, reminder_fired, created_at, updated_at FROM tasks ORDER BY is_pinned DESC, updated_at DESC",
         )
         .map_err(|e| format!("db prepare list: {e}"))?;
     let rows = stmt
@@ -337,8 +402,10 @@ pub fn list_tasks(conn: &Connection, master: &MasterKey) -> Result<Vec<Task>, St
                 r.get::<_, Option<String>>(10)?,
                 r.get::<_, String>(11)?,
                 r.get::<_, Option<String>>(12)?,
-                r.get::<_, String>(13)?,
-                r.get::<_, String>(14)?,
+                r.get::<_, Option<String>>(13)?,
+                r.get::<_, i64>(14)?,
+                r.get::<_, String>(15)?,
+                r.get::<_, String>(16)?,
             ))
         })
         .map_err(|e| format!("db list tasks: {e}"))?;
@@ -358,6 +425,8 @@ pub fn list_tasks(conn: &Connection, master: &MasterKey) -> Result<Vec<Task>, St
             folder_id,
             tags_json,
             due_date,
+            reminder_at,
+            reminder_fired,
             created_at,
             updated_at,
         ) = row.map_err(|e| format!("db row: {e}"))?;
@@ -376,6 +445,8 @@ pub fn list_tasks(conn: &Connection, master: &MasterKey) -> Result<Vec<Task>, St
             folder_id,
             tags_json,
             due_date,
+            reminder_at,
+            reminder_fired,
             created_at,
             updated_at,
         )?);
@@ -386,13 +457,14 @@ pub fn list_tasks(conn: &Connection, master: &MasterKey) -> Result<Vec<Task>, St
 pub fn get_task(conn: &Connection, master: &MasterKey, id: &str) -> Result<Option<Task>, String> {
     let row: Option<TaskRow> = conn
         .query_row(
-            "SELECT id, encrypted_title, title_nonce, encrypted_note, note_nonce, encrypted_subtasks, subtasks_nonce, status, priority, is_pinned, folder_id, tags_json, due_date, created_at, updated_at FROM tasks WHERE id = ?1",
+            "SELECT id, encrypted_title, title_nonce, encrypted_note, note_nonce, encrypted_subtasks, subtasks_nonce, status, priority, is_pinned, folder_id, tags_json, due_date, reminder_at, reminder_fired, created_at, updated_at FROM tasks WHERE id = ?1",
             params![id],
             |r| {
                 Ok((
                     r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?,
                     r.get(5)?, r.get(6)?, r.get(7)?, r.get(8)?, r.get(9)?,
                     r.get(10)?, r.get(11)?, r.get(12)?, r.get(13)?, r.get(14)?,
+                    r.get(15)?, r.get(16)?,
                 ))
             },
         )
@@ -413,6 +485,8 @@ pub fn get_task(conn: &Connection, master: &MasterKey, id: &str) -> Result<Optio
             folder_id,
             tags_json,
             due_date,
+            reminder_at,
+            reminder_fired,
             created_at,
             updated_at,
         )| {
@@ -431,6 +505,8 @@ pub fn get_task(conn: &Connection, master: &MasterKey, id: &str) -> Result<Optio
                 folder_id,
                 tags_json,
                 due_date,
+                reminder_at,
+                reminder_fired,
                 created_at,
                 updated_at,
             )
@@ -456,6 +532,11 @@ pub fn create_task(
     let folder_id = input.folder_id.unwrap_or_else(|| "inbox".to_string());
     let tags = input.tags.unwrap_or_default();
     let due_date = input.due_date.filter(|s| !s.is_empty());
+    let reminder_at = input
+        .reminder_at
+        .filter(|s| !s.trim().is_empty())
+        .map(|s| normalize_reminder_at(&s))
+        .transpose()?;
 
     let key = master.as_bytes();
     let (enc_title, title_nonce) = encrypt_bytes(key, title.as_bytes())?;
@@ -468,7 +549,7 @@ pub fn create_task(
     let id = uuid::Uuid::new_v4().to_string();
     let now = Utc::now().to_rfc3339();
     conn.execute(
-        "INSERT INTO tasks (id, encrypted_title, title_nonce, encrypted_note, note_nonce, encrypted_subtasks, subtasks_nonce, status, priority, is_pinned, folder_id, tags_json, due_date, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 0, ?10, ?11, ?12, ?13, ?14)",
+        "INSERT INTO tasks (id, encrypted_title, title_nonce, encrypted_note, note_nonce, encrypted_subtasks, subtasks_nonce, status, priority, is_pinned, folder_id, tags_json, due_date, reminder_at, reminder_fired, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 0, ?10, ?11, ?12, ?13, 0, ?14, ?15)",
         params![
             id,
             enc_title,
@@ -482,6 +563,7 @@ pub fn create_task(
             folder_id,
             tags_json,
             due_date,
+            reminder_at,
             now,
             now,
         ],
@@ -499,6 +581,8 @@ pub fn create_task(
         folder_id,
         tags,
         due_date,
+        reminder_at,
+        reminder_fired: false,
         created_at: now.clone(),
         updated_at: now,
     })
@@ -548,6 +632,13 @@ pub fn update_task(
         Some(s) if s.is_empty() => None,
         Some(s) => Some(s),
     };
+    // Setting (or re-setting) a reminder re-arms it: fired resets so the
+    // scheduler fires the new time exactly once.
+    let (reminder_at, reminder_fired) = match patch.reminder_at {
+        None => (existing.reminder_at.clone(), existing.reminder_fired),
+        Some(s) if s.trim().is_empty() => (None, false),
+        Some(s) => (Some(normalize_reminder_at(&s)?), false),
+    };
 
     let key = master.as_bytes();
     let (enc_title, title_nonce) = encrypt_bytes(key, title.as_bytes())?;
@@ -558,7 +649,7 @@ pub fn update_task(
     let now = Utc::now().to_rfc3339();
 
     conn.execute(
-        "UPDATE tasks SET encrypted_title = ?1, title_nonce = ?2, encrypted_note = ?3, note_nonce = ?4, encrypted_subtasks = ?5, subtasks_nonce = ?6, status = ?7, priority = ?8, is_pinned = ?9, folder_id = ?10, tags_json = ?11, due_date = ?12, updated_at = ?13 WHERE id = ?14",
+        "UPDATE tasks SET encrypted_title = ?1, title_nonce = ?2, encrypted_note = ?3, note_nonce = ?4, encrypted_subtasks = ?5, subtasks_nonce = ?6, status = ?7, priority = ?8, is_pinned = ?9, folder_id = ?10, tags_json = ?11, due_date = ?12, reminder_at = ?13, reminder_fired = ?14, updated_at = ?15 WHERE id = ?16",
         params![
             enc_title,
             title_nonce.as_slice(),
@@ -572,6 +663,8 @@ pub fn update_task(
             folder_id,
             tags_json,
             due_date,
+            reminder_at,
+            i64::from(reminder_fired),
             now,
             id,
         ],
@@ -589,6 +682,8 @@ pub fn update_task(
         folder_id,
         tags,
         due_date,
+        reminder_at,
+        reminder_fired,
         created_at: existing.created_at,
         updated_at: now,
     })
@@ -599,6 +694,82 @@ pub fn delete_task(conn: &Connection, id: &str) -> Result<bool, String> {
         .execute("DELETE FROM tasks WHERE id = ?1", params![id])
         .map_err(|e| format!("db delete task: {e}"))?;
     Ok(n > 0)
+}
+
+// ---------------------------------------------------------------------------
+// Reminder scheduler queries
+// ---------------------------------------------------------------------------
+
+/// A due reminder. `title` is `Some(decrypted)` only when the caller
+/// passed an unlocked master key — locked-state callers get `None` so no
+/// plaintext can leak into a notification payload.
+pub struct DueReminder {
+    pub id: String,
+    pub title: Option<String>,
+    pub reminder_at: String,
+}
+
+/// Tasks with `status != 'done'`, `reminder_fired = 0` and
+/// `reminder_at <= now_rfc3339` (both canonical UTC `…Z`, so the string
+/// comparison is a valid chronological comparison).
+pub fn collect_due_reminders(
+    conn: &Connection,
+    now_rfc3339: &str,
+    master: Option<&MasterKey>,
+) -> Result<Vec<DueReminder>, String> {
+    let key = master.map(MasterKey::as_bytes);
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, encrypted_title, title_nonce, reminder_at FROM tasks WHERE status != 'done' AND reminder_fired = 0 AND reminder_at IS NOT NULL AND reminder_at <= ?1 ORDER BY reminder_at",
+        )
+        .map_err(|e| format!("db prepare due reminders: {e}"))?;
+    let rows = stmt
+        .query_map(params![now_rfc3339], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, Vec<u8>>(1)?,
+                r.get::<_, Vec<u8>>(2)?,
+                r.get::<_, String>(3)?,
+            ))
+        })
+        .map_err(|e| format!("db scan due reminders: {e}"))?;
+    let mut out = Vec::new();
+    for row in rows {
+        let (id, enc_title, title_nonce, reminder_at) =
+            row.map_err(|e| format!("db due reminder row: {e}"))?;
+        let title = match key {
+            Some(k) => {
+                let bytes = decrypt_bytes(k, &enc_title, &nonce_from_slice(&title_nonce)?)?;
+                Some(String::from_utf8(bytes).map_err(|_| "corrupted title utf-8".to_string())?)
+            }
+            None => None,
+        };
+        out.push(DueReminder {
+            id,
+            title,
+            reminder_at,
+        });
+    }
+    Ok(out)
+}
+
+/// Mark reminders as fired AFTER successful dispatch (at-most-once).
+/// Returns the number of rows flipped.
+pub fn mark_reminders_fired(conn: &Connection, ids: &[String]) -> Result<usize, String> {
+    if ids.is_empty() {
+        return Ok(0);
+    }
+    let placeholders = ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+    let sql = format!("UPDATE tasks SET reminder_fired = 1 WHERE id IN ({placeholders})");
+    let mut stmt = conn
+        .prepare(&sql)
+        .map_err(|e| format!("db prepare mark fired: {e}"))?;
+    let params: Vec<&dyn rusqlite::ToSql> =
+        ids.iter().map(|id| id as &dyn rusqlite::ToSql).collect();
+    let n = stmt
+        .execute(params.as_slice())
+        .map_err(|e| format!("db mark fired: {e}"))?;
+    Ok(n)
 }
 
 /// Re-encrypt every task + the verifier under a new key (password change).
@@ -705,6 +876,14 @@ pub struct BackupMeta {
     pub auto_lock_seconds: u64,
     pub lock_on_tray_hide: bool,
     pub keyring_enabled: bool,
+    /// Absent in pre-reminder bundles — default hides previews (safe side).
+    #[serde(default = "hide_preview_default")]
+    pub hide_notification_preview: bool,
+}
+
+/// Serde default for bundles written before reminders existed.
+fn hide_preview_default() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -722,6 +901,10 @@ pub struct BackupTaskRow {
     pub folder_id: Option<String>,
     pub tags_json: String,
     pub due_date: Option<String>,
+    pub reminder_at: Option<String>,
+    /// Absent in pre-reminder bundles — `false` re-arms nothing (no time).
+    #[serde(default)]
+    pub reminder_fired: bool,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -778,12 +961,13 @@ pub fn build_backup_payload(conn: &Connection) -> Result<BackupPayload, String> 
     let meta = get_vault_meta(conn)?.ok_or_else(|| "vault is not initialized".to_string())?;
     let mut stmt = conn
         .prepare(
-            "SELECT id, encrypted_title, title_nonce, encrypted_note, note_nonce, encrypted_subtasks, subtasks_nonce, status, priority, is_pinned, folder_id, tags_json, due_date, created_at, updated_at FROM tasks ORDER BY updated_at",
+            "SELECT id, encrypted_title, title_nonce, encrypted_note, note_nonce, encrypted_subtasks, subtasks_nonce, status, priority, is_pinned, folder_id, tags_json, due_date, reminder_at, reminder_fired, created_at, updated_at FROM tasks ORDER BY updated_at",
         )
         .map_err(|e| format!("db prepare backup scan: {e}"))?;
     let rows = stmt
         .query_map([], |r| {
             let pinned: i64 = r.get(9)?;
+            let fired: i64 = r.get(14)?;
             Ok(BackupTaskRow {
                 id: r.get(0)?,
                 encrypted_title_b64: b64e(&r.get::<_, Vec<u8>>(1)?),
@@ -798,8 +982,10 @@ pub fn build_backup_payload(conn: &Connection) -> Result<BackupPayload, String> 
                 folder_id: r.get(10)?,
                 tags_json: r.get(11)?,
                 due_date: r.get(12)?,
-                created_at: r.get(13)?,
-                updated_at: r.get(14)?,
+                reminder_at: r.get(13)?,
+                reminder_fired: fired != 0,
+                created_at: r.get(15)?,
+                updated_at: r.get(16)?,
             })
         })
         .map_err(|e| format!("db scan backup rows: {e}"))?;
@@ -816,6 +1002,7 @@ pub fn build_backup_payload(conn: &Connection) -> Result<BackupPayload, String> 
             auto_lock_seconds: meta.auto_lock_seconds,
             lock_on_tray_hide: meta.lock_on_tray_hide,
             keyring_enabled: meta.keyring_enabled,
+            hide_notification_preview: meta.hide_notification_preview,
         },
         tasks,
     })
@@ -901,7 +1088,7 @@ pub fn restore_backup_payload(
     tx.execute("DELETE FROM vault_meta", [])
         .map_err(|e| format!("db restore clear meta: {e}"))?;
     tx.execute(
-        "INSERT INTO vault_meta (id, kdf_salt, verifier_nonce, verifier_ciphertext, auto_lock_seconds, lock_on_tray_hide, keyring_enabled, created_at) VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        "INSERT INTO vault_meta (id, kdf_salt, verifier_nonce, verifier_ciphertext, auto_lock_seconds, lock_on_tray_hide, keyring_enabled, hide_notification_preview, created_at) VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
         params![
             salt,
             verifier_nonce,
@@ -909,6 +1096,7 @@ pub fn restore_backup_payload(
             payload.meta.auto_lock_seconds as i64,
             i64::from(payload.meta.lock_on_tray_hide),
             i64::from(payload.meta.keyring_enabled),
+            i64::from(payload.meta.hide_notification_preview),
             Utc::now().to_rfc3339(),
         ],
     )
@@ -916,7 +1104,7 @@ pub fn restore_backup_payload(
     {
         let mut stmt = tx
             .prepare(
-                "INSERT INTO tasks (id, encrypted_title, title_nonce, encrypted_note, note_nonce, encrypted_subtasks, subtasks_nonce, status, priority, is_pinned, folder_id, tags_json, due_date, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+                "INSERT INTO tasks (id, encrypted_title, title_nonce, encrypted_note, note_nonce, encrypted_subtasks, subtasks_nonce, status, priority, is_pinned, folder_id, tags_json, due_date, reminder_at, reminder_fired, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
             )
             .map_err(|e| format!("db restore prepare: {e}"))?;
         for (t, enc_title, title_nonce, enc_note, note_nonce, enc_sub, sub_nonce) in &decoded {
@@ -934,6 +1122,8 @@ pub fn restore_backup_payload(
                 t.folder_id,
                 t.tags_json,
                 t.due_date,
+                t.reminder_at,
+                i64::from(t.reminder_fired),
                 t.created_at,
                 t.updated_at,
             ])
@@ -953,6 +1143,10 @@ pub fn render_task_markdown(task: &Task) -> String {
     match &task.due_date {
         Some(d) => out.push_str(&format!("due_date: {d}\n")),
         None => out.push_str("due_date: null\n"),
+    }
+    match &task.reminder_at {
+        Some(r) => out.push_str(&format!("reminder_at: {r}\n")),
+        None => out.push_str("reminder_at: null\n"),
     }
     let tags = serde_json::to_string(&task.tags).unwrap_or_else(|_| "[]".to_string());
     out.push_str(&format!("tags: {tags}\n"));
@@ -1045,6 +1239,7 @@ mod tests {
                 folder_id: Some("work".to_string()),
                 tags: Some(vec!["urgent".to_string()]),
                 due_date: Some("2026-11-10".to_string()),
+                reminder_at: None,
             },
         )
         .unwrap();
@@ -1100,6 +1295,7 @@ mod tests {
                 folder_id: None,
                 tags: None,
                 due_date: None,
+                reminder_at: None,
             },
         )
         .unwrap();
@@ -1119,6 +1315,7 @@ mod tests {
             folder_id: None,
             tags: None,
             due_date: None,
+            reminder_at: None,
         };
         assert!(create_task(&conn, &master, mk("  ", None, None)).is_err());
         assert!(create_task(&conn, &master, mk("t", Some("nope"), None)).is_err());
@@ -1140,6 +1337,7 @@ mod tests {
                 folder_id: None,
                 tags: Some(vec!["home".to_string()]),
                 due_date: Some("2026-11-05".to_string()),
+                reminder_at: None,
             },
         )
         .unwrap();
@@ -1155,7 +1353,7 @@ mod tests {
         let salt = [21u8; 16];
         let key = derive_key("backup-fixture-pw", &salt).unwrap();
         let (ct, nonce) = encrypt_bytes(&key, VERIFIER_PLAINTEXT).unwrap();
-        insert_vault_meta(&conn, &salt, &nonce, &ct, 600, true, false).unwrap();
+        insert_vault_meta(&conn, &salt, &nonce, &ct, 600, true, false, true).unwrap();
         (conn, MasterKey(key))
     }
 
@@ -1173,6 +1371,7 @@ mod tests {
                 folder_id: None,
                 tags: None,
                 due_date: None,
+                reminder_at: None,
             },
         )
         .unwrap();
@@ -1204,6 +1403,7 @@ mod tests {
                 folder_id: None,
                 tags: None,
                 due_date: None,
+                reminder_at: None,
             },
         )
         .unwrap();
@@ -1230,6 +1430,7 @@ mod tests {
                 folder_id: None,
                 tags: None,
                 due_date: None,
+                reminder_at: None,
             },
         )
         .unwrap();
@@ -1245,6 +1446,7 @@ mod tests {
     fn backup_roundtrip_is_lossless() {
         let (conn_a, master) = backup_fixture();
         set_keyring_enabled(&conn_a, true).unwrap();
+        update_vault_settings(&conn_a, 600, true, false).unwrap();
         for (title, status, priority) in
             [("alpha task", "todo", 1), ("beta task", "in_progress", 4)]
         {
@@ -1259,6 +1461,7 @@ mod tests {
                     folder_id: Some("work".to_string()),
                     tags: Some(vec!["k".to_string()]),
                     due_date: Some("2026-12-31".to_string()),
+                    reminder_at: Some("2026-12-31T09:00:00Z".to_string()),
                 },
             )
             .unwrap();
@@ -1276,6 +1479,8 @@ mod tests {
         assert_eq!(meta_b.auto_lock_seconds, 600);
         assert!(meta_b.lock_on_tray_hide);
         assert!(meta_b.keyring_enabled);
+        assert!(!meta_b.hide_notification_preview);
+        // Reminder fields ride along (both tasks carry reminder_at).
         let before = serde_json::to_value(list_tasks(&conn_a, &master).unwrap()).unwrap();
         let after = serde_json::to_value(list_tasks(&conn_b, &master).unwrap()).unwrap();
         assert_eq!(before, after);
@@ -1305,6 +1510,8 @@ mod tests {
             folder_id: "inbox".to_string(),
             tags: vec!["a".to_string(), "b".to_string()],
             due_date: Some("2026-12-01".to_string()),
+            reminder_at: Some("2026-12-01T09:30:00Z".to_string()),
+            reminder_fired: false,
             created_at: "2026-11-04T00:00:00Z".to_string(),
             updated_at: "2026-11-04T00:00:00Z".to_string(),
         };
@@ -1312,6 +1519,7 @@ mod tests {
         assert!(md.contains("status: in_progress"));
         assert!(md.contains("priority: 3"));
         assert!(md.contains("due_date: 2026-12-01"));
+        assert!(md.contains("reminder_at: 2026-12-01T09:30:00Z"));
         assert!(md.contains("tags: [\"a\",\"b\"]"));
         assert!(md.contains("# Hello, World!"));
         assert!(md.contains("- [x] done thing"));
@@ -1344,5 +1552,196 @@ mod tests {
         assert!(!meta.keyring_enabled);
         set_keyring_enabled(&conn, true).unwrap();
         assert!(get_vault_meta(&conn).unwrap().unwrap().keyring_enabled);
+        // Phase 9 columns arrive with privacy-safe defaults.
+        assert!(
+            get_vault_meta(&conn)
+                .unwrap()
+                .unwrap()
+                .hide_notification_preview
+        );
+        let cols: Vec<String> = conn
+            .prepare("SELECT name FROM pragma_table_info('tasks')")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert!(cols.contains(&"reminder_at".to_string()));
+        assert!(cols.contains(&"reminder_fired".to_string()));
+    }
+
+    #[test]
+    fn reminder_normalize_canonicalizes_offsets() {
+        assert_eq!(
+            normalize_reminder_at("2026-11-05T14:30:00+05:30").unwrap(),
+            "2026-11-05T09:00:00Z"
+        );
+        assert_eq!(
+            normalize_reminder_at("2026-11-05T09:00:00Z").unwrap(),
+            "2026-11-05T09:00:00Z"
+        );
+        assert!(normalize_reminder_at("not-a-time").is_err());
+        assert!(normalize_reminder_at("   ").is_err());
+    }
+
+    fn reminder_probe(
+        conn: &Connection,
+        master: &MasterKey,
+        title: &str,
+        status: Option<&str>,
+        reminder_at: Option<&str>,
+    ) -> String {
+        create_task(
+            conn,
+            master,
+            CreateTaskInput {
+                title: title.to_string(),
+                note_markdown: None,
+                status: status.map(str::to_string),
+                priority: None,
+                folder_id: None,
+                tags: None,
+                due_date: None,
+                reminder_at: reminder_at.map(str::to_string),
+            },
+        )
+        .unwrap()
+        .id
+    }
+
+    #[test]
+    fn due_reminders_filter_and_redact_by_lock_state() {
+        let conn = mem_db();
+        let master = test_key();
+        let now = "2026-11-05T12:00:00Z";
+        let past = "2026-11-05T11:00:00Z";
+        let future = "2026-11-05T13:00:00Z";
+
+        let due_id = reminder_probe(&conn, &master, "due task", None, Some(past));
+        reminder_probe(&conn, &master, "future task", None, Some(future));
+        reminder_probe(&conn, &master, "done task", Some("done"), Some(past));
+        reminder_probe(&conn, &master, "no reminder task", None, None);
+        let fired_id = reminder_probe(&conn, &master, "fired task", None, Some(past));
+        assert_eq!(mark_reminders_fired(&conn, &[fired_id]), Ok(1));
+        assert_eq!(mark_reminders_fired(&conn, &[]), Ok(0));
+
+        // Unlocked: only the past todo, with its decrypted title.
+        let due = collect_due_reminders(&conn, now, Some(&master)).unwrap();
+        assert_eq!(due.len(), 1);
+        assert_eq!(due[0].id, due_id);
+        assert_eq!(due[0].title.as_deref(), Some("due task"));
+        assert_eq!(due[0].reminder_at, past);
+
+        // Locked (no key): same row, title redacted to None.
+        let locked = collect_due_reminders(&conn, now, None).unwrap();
+        assert_eq!(locked.len(), 1);
+        assert_eq!(locked[0].id, due_id);
+        assert!(locked[0].title.is_none());
+
+        // Marking fired removes it from the next poll (no duplicates).
+        assert_eq!(mark_reminders_fired(&conn, &[due_id]), Ok(1));
+        assert!(
+            collect_due_reminders(&conn, now, Some(&master))
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn update_task_reminder_rearms_fired_flag() {
+        let conn = mem_db();
+        let master = test_key();
+        let id = reminder_probe(&conn, &master, "rearm probe", None, None);
+
+        let set = update_task(
+            &conn,
+            &master,
+            &id,
+            UpdateTaskPatch {
+                reminder_at: Some("2026-11-06T09:00:00+00:00".to_string()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(set.reminder_at.as_deref(), Some("2026-11-06T09:00:00Z"));
+        assert!(!set.reminder_fired);
+
+        mark_reminders_fired(&conn, std::slice::from_ref(&id)).unwrap();
+        assert!(
+            get_task(&conn, &master, &id)
+                .unwrap()
+                .unwrap()
+                .reminder_fired
+        );
+
+        // Re-setting to a new future time re-arms.
+        let reset = update_task(
+            &conn,
+            &master,
+            &id,
+            UpdateTaskPatch {
+                reminder_at: Some("2026-11-07T09:00:00Z".to_string()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(!reset.reminder_fired);
+
+        // Clearing drops the time; garbage is rejected.
+        let cleared = update_task(
+            &conn,
+            &master,
+            &id,
+            UpdateTaskPatch {
+                reminder_at: Some(String::new()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(cleared.reminder_at.is_none());
+        assert!(
+            update_task(
+                &conn,
+                &master,
+                &id,
+                UpdateTaskPatch {
+                    reminder_at: Some("tomorrow-ish".to_string()),
+                    ..Default::default()
+                },
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn pre_reminder_bundle_restores_with_safe_defaults() {
+        let (conn_a, master) = backup_fixture();
+        reminder_probe(
+            &conn_a,
+            &master,
+            "legacy task",
+            None,
+            Some("2026-12-01T08:00:00Z"),
+        );
+        let payload = build_backup_payload(&conn_a).unwrap();
+        // Strip Phase 9 keys to simulate a 0.2.0-era bundle.
+        let mut value = serde_json::to_value(&payload).unwrap();
+        value["meta"]
+            .as_object_mut()
+            .unwrap()
+            .remove("hide_notification_preview");
+        for task in value["tasks"].as_array_mut().unwrap() {
+            task.as_object_mut().unwrap().remove("reminder_at");
+            task.as_object_mut().unwrap().remove("reminder_fired");
+        }
+        let legacy: BackupPayload = serde_json::from_value(value).unwrap();
+        let mut conn_b = mem_db();
+        restore_backup_payload(&mut conn_b, &legacy).unwrap();
+        let meta_b = get_vault_meta(&conn_b).unwrap().unwrap();
+        assert!(meta_b.hide_notification_preview);
+        let tasks = list_tasks(&conn_b, &master).unwrap();
+        assert_eq!(tasks.len(), 1);
+        assert!(tasks[0].reminder_at.is_none());
+        assert!(!tasks[0].reminder_fired);
     }
 }
