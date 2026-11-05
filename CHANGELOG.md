@@ -3,6 +3,13 @@
 All notable changes to VaultTask are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [Unreleased]
+
+### Changed
+
+- Release pipeline builds the full installer matrix again (msi + nsis
+  + deb + rpm + appimage); the msi+rpm test track is over
+
 ## [0.4.3] - 2026-11-05
 
 ### Fixed
