@@ -5,6 +5,14 @@ All notable changes to VaultTask are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- OneDrive-style tray: the tray item carries no menu, so left-click
+  always toggles the flyout (GNOME shells show an item's menu on
+  left-click whenever one exists). Quit moved in-app — titlebar ⋯ menu
+  and a Settings row (immediate exit, vault stays encrypted at rest);
+  Check for Updates lives in the ⋯ menu too
+
 ### Fixed
 
 - Tray icon too small on dark top bars: dedicated full-bleed tray asset
