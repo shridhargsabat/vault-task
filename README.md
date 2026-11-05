@@ -1,5 +1,7 @@
 # VaultTask — Encrypted Tray Task Manager + Markdown Notes
 
+<img src="assets/logo.svg" alt="VaultTask logo" width="96" />
+
 Tauri v2 (Rust + React 18 + TypeScript + Tailwind + Zustand) desktop app for
 Windows 11, Ubuntu 24.04+, and Fedora 41+.
 
