@@ -51,6 +51,22 @@ function App() {
     return () => unlisten?.();
   }, []);
 
+  // Linux tray menu "Check for Updates..." (libappindicator delivers menu
+  // activation only): open Settings and trigger the Updates card check.
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    listen("updater://check", () => {
+      useVaultStore.getState().requestUpdateCheck();
+    })
+      .then((fn) => {
+        unlisten = fn;
+      })
+      .catch(() => {
+        /* not running under Tauri (browser preview) */
+      });
+    return () => unlisten?.();
+  }, []);
+
   return (
     <div className="flex h-full w-full flex-col overflow-hidden">
       <CustomTitlebar />

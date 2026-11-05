@@ -3,6 +3,17 @@
 All notable changes to VaultTask are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [Unreleased]
+
+### Fixed
+
+- Tray icon missing on GNOME (v0.4.1+): the menu-less StatusNotifier
+  item never reaches the AppIndicator extension's `ready` gate, so no
+  icon appears. Linux now ships a minimal static tray menu (Show/Hide,
+  Check for Updates, Quit); Windows/macOS keep the menu-less
+  click-toggle. Menu labels are static (built once, never rebuilt), so
+  the push-only-on-change flash fix still holds.
+
 ## [0.4.2] - 2026-11-05
 
 ### Fixed
