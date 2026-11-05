@@ -1,6 +1,7 @@
 pub(crate) mod commands;
 mod crypto;
 mod db;
+mod scheduler;
 pub(crate) mod state;
 mod tray;
 mod watchdog;
@@ -16,6 +17,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_positioner::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
@@ -58,6 +60,8 @@ pub fn run() {
             // 1s inactivity watchdog + OS session-lock listener.
             watchdog::spawn_watchdog(app.handle());
             watchdog::spawn_session_lock_listener(app.handle());
+            // 15s due-reminder notification scheduler.
+            scheduler::spawn_scheduler(app.handle());
             Ok(())
         })
         .on_window_event(|window, event| match event {

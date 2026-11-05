@@ -56,10 +56,10 @@ export function SecuritySettingsModal() {
 
   if (!isOpen || !status) return null;
 
-  const saveSettings = async (seconds: number, hide: boolean) => {
+  const saveSettings = async (seconds: number, hide: boolean, hidePreview: boolean) => {
     setSaving(true);
     try {
-      const ok = await updateSecuritySettings(seconds, hide);
+      const ok = await updateSecuritySettings(seconds, hide, hidePreview);
       if (ok) setSavedTick((t) => t + 1);
     } finally {
       setSaving(false);
@@ -206,7 +206,7 @@ export function SecuritySettingsModal() {
                 <button
                   key={p.seconds}
                   disabled={saving}
-                  onClick={() => void saveSettings(p.seconds, status.lock_on_tray_hide)}
+                  onClick={() => void saveSettings(p.seconds, status.lock_on_tray_hide, status.hide_notification_preview)}
                   className={`rounded-md py-1.5 text-xs font-medium disabled:opacity-50 ${
                     active
                       ? "bg-emerald-600 text-white"
@@ -224,7 +224,7 @@ export function SecuritySettingsModal() {
           <button
             disabled={saving}
             onClick={() =>
-              void saveSettings(status.auto_lock_seconds, !status.lock_on_tray_hide)
+              void saveSettings(status.auto_lock_seconds, !status.lock_on_tray_hide, status.hide_notification_preview)
             }
             className="flex w-full items-center gap-2.5 rounded-lg bg-neutral-800 px-3 py-2 text-left text-xs disabled:opacity-50"
           >
@@ -290,6 +290,34 @@ export function SecuritySettingsModal() {
             <span className="leading-snug text-neutral-200">
               Enable OS Keyring Quick-Unlock (Windows Credential Manager /
               Linux Secret Service)
+            </span>
+          </button>
+        </section>
+
+        <section className="border-t border-neutral-800 pt-3">
+          <button
+            disabled={saving}
+            onClick={() =>
+              void saveSettings(status.auto_lock_seconds, status.lock_on_tray_hide, !status.hide_notification_preview)
+            }
+            className="flex w-full items-center gap-2.5 rounded-lg bg-neutral-800 px-3 py-2 text-left text-xs disabled:opacity-50"
+          >
+            <span
+              className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${
+                !status.hide_notification_preview ? "bg-emerald-600" : "bg-neutral-700"
+              }`}
+            >
+              <span
+                className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all ${
+                  !status.hide_notification_preview ? "left-[18px]" : "left-0.5"
+                }`}
+              />
+            </span>
+            <span className="leading-snug text-neutral-200">
+              Show task titles in notifications when unlocked
+              <span className="block text-[11px] text-neutral-500">
+                Locked notifications never show content.
+              </span>
             </span>
           </button>
         </section>

@@ -119,21 +119,24 @@ mod tests {
         let updated = call(
             &webview,
             "update_task",
-            json!({"id": id, "due_date": "2026-11-06", "is_pinned": true, "note_markdown": "edited"}),
+            json!({"id": id, "due_date": "2026-11-06", "is_pinned": true, "note_markdown": "edited", "reminder_at": "2026-11-06T09:00:00Z"}),
         );
         assert_eq!(updated["due_date"], "2026-11-06");
         assert_eq!(updated["is_pinned"], true);
         assert_eq!(updated["note_markdown"], "edited");
         assert_eq!(updated["title"], "IPC probe"); // untouched
+        assert_eq!(updated["reminder_at"], "2026-11-06T09:00:00Z");
+        assert_eq!(updated["reminder_fired"], false);
 
         // 4. Security settings (non-optional => hard failure pre-fix).
         let settings = call(
             &webview,
             "update_security_settings",
-            json!({"auto_lock_seconds": 600, "lock_on_tray_hide": true}),
+            json!({"auto_lock_seconds": 600, "lock_on_tray_hide": true, "hide_notification_preview": false}),
         );
         assert_eq!(settings["auto_lock_seconds"], 600);
         assert_eq!(settings["lock_on_tray_hide"], true);
+        assert_eq!(settings["hide_notification_preview"], false);
 
         let _ = std::fs::remove_file(&db_path);
     }

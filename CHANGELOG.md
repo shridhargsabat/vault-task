@@ -3,6 +3,24 @@
 All notable changes to VaultTask are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [Unreleased]
+
+### Added — Phase 9: Scheduled reminders + privacy-safe notifications
+
+- `tauri-plugin-notification` (Windows toast / freedesktop D-Bus) with
+  a 15s Rust scheduler: due = `status != 'done'` + unfired +
+  `reminder_at <= now`, marked fired only after successful dispatch
+- Privacy-safe payloads: locked vaults (or hidden previews) get a
+  generic "VaultTask Reminder" with zero decrypted content; unlocked
+  vaults with previews on get "Task Due: \<title\>"
+- `reminder_at` (canonical UTC ISO-8601) + `reminder_fired` on tasks,
+  `hide_notification_preview` (default ON) in `vault_meta` — all via
+  safe ALTER TABLE migration, all carried through `.vault` backups
+  (pre-reminder bundles restore with safe defaults)
+- Reminder picker in the task pane (presets + calendar + HH:MM),
+  `@remind(15m|1h|tomorrow|17:30)` quick-add syntax, and a "Show task
+  titles in notifications when unlocked" Settings toggle
+
 ## [0.2.0] - 2026-11-05
 
 ### Added — Phase 6: Encrypted backup + Markdown export

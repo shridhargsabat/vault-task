@@ -1,8 +1,8 @@
 import { useMemo, useState } from "react";
-import { CalendarDays, Plus } from "lucide-react";
+import { Bell, CalendarDays, Plus } from "lucide-react";
 import { useVaultStore } from "../../store/useVaultStore";
 import { parseQuickAdd } from "../../utils/quickAdd";
-import { formatDue } from "../../utils/dates";
+import { formatDue, formatReminder } from "../../utils/dates";
 import { priorityMeta } from "../../utils/priorities";
 
 export function QuickAddBar() {
@@ -13,7 +13,9 @@ export function QuickAddBar() {
   const parsed = useMemo(() => parseQuickAdd(value), [value]);
   const showHints =
     value.trim().length > 0 &&
-    (parsed.priority !== undefined || parsed.due_date !== undefined);
+    (parsed.priority !== undefined ||
+      parsed.due_date !== undefined ||
+      parsed.reminder_at !== undefined);
 
   const submit = async () => {
     if (!parsed.title || busy) return;
@@ -23,6 +25,7 @@ export function QuickAddBar() {
         title: parsed.title,
         priority: parsed.priority,
         due_date: parsed.due_date ?? null,
+        reminder_at: parsed.reminder_at ?? null,
       });
       setValue("");
     } finally {
@@ -40,7 +43,7 @@ export function QuickAddBar() {
           onKeyDown={(e) => {
             if (e.key === "Enter") void submit();
           }}
-          placeholder="Add a task… (!high @today)"
+          placeholder="Add a task… (!high @today @remind(1h))"
           className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-neutral-500"
         />
         {showHints && (
@@ -58,6 +61,15 @@ export function QuickAddBar() {
               >
                 <CalendarDays className="h-3 w-3" />
                 {formatDue(parsed.due_date)}
+              </span>
+            )}
+            {parsed.reminder_at !== undefined && (
+              <span
+                className="flex items-center gap-1 text-[11px] text-neutral-400"
+                title={parsed.reminder_at}
+              >
+                <Bell className="h-3 w-3" />
+                {formatReminder(parsed.reminder_at)}
               </span>
             )}
           </span>

@@ -23,6 +23,8 @@ export interface Task {
   folder_id: string;
   tags: string[];
   due_date: string | null;
+  reminder_at: string | null;
+  reminder_fired: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -33,11 +35,13 @@ export interface VaultStatus {
   auto_lock_seconds: number;
   lock_on_tray_hide: boolean;
   keyring_enabled: boolean;
+  hide_notification_preview: boolean;
 }
 
 export interface VaultConfig {
   auto_lock_seconds: number;
   lock_on_tray_hide: boolean;
+  hide_notification_preview: boolean;
 }
 
 export interface CreateTaskInput {
@@ -48,6 +52,7 @@ export interface CreateTaskInput {
   folder_id?: string;
   tags?: string[];
   due_date?: string | null;
+  reminder_at?: string | null;
 }
 
 export interface UpdateTaskInput {
@@ -60,6 +65,7 @@ export interface UpdateTaskInput {
   folder_id?: string;
   tags?: string[];
   due_date?: string | null;
+  reminder_at?: string | null;
 }
 
 export interface BackupStats {

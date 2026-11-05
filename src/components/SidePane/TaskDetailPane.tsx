@@ -4,6 +4,7 @@ import { useVaultStore } from "../../store/useVaultStore";
 import { useDebouncedField } from "../../hooks/useDebouncedField";
 import { PrioritySelect } from "./PrioritySelect";
 import { DueDatePicker } from "./DueDatePicker";
+import { ReminderPicker } from "./ReminderPicker";
 import { SubtaskList } from "./SubtaskList";
 import { NoteEditor } from "./NoteEditor";
 import type { Subtask, Task, TaskStatus } from "../../types/models";
@@ -157,6 +158,11 @@ export function TaskDetailPane({
           <DueDatePicker
             value={task.due_date}
             onChange={(iso) => void updateTask(task.id, { due_date: iso })}
+          />
+          <ReminderPicker
+            value={task.reminder_at}
+            fired={task.reminder_fired}
+            onChange={(iso) => void updateTask(task.id, { reminder_at: iso })}
           />
         </div>
 

@@ -23,6 +23,20 @@ three package versions, builds `.msi` + `-setup.exe` on Windows,
 `rpm -qpR` dependency check), then publishes all five installers plus
 `SHA256SUMS.txt` to a GitHub Release.
 
+## Phase 9 — Scheduled reminders + privacy-safe notifications ✅
+
+- `tauri-plugin-notification` + 15s `scheduler.rs` tick: fires native
+  OS toasts for due reminders, marks `reminder_fired` only after
+  successful dispatch (failures retry; no duplicates, no activity
+  recorded so ticks never delay auto-lock)
+- Locked vaults (or hidden previews) get a generic "VaultTask
+  Reminder" — titles decrypt in memory only when unlocked with
+  previews allowed; `cargo test` 38 green · clippy 0 · typecheck 0
+- Reminder picker (presets + calendar + HH:MM), `@remind(15m|1h|…)`
+  quick-add, Settings privacy toggle; schema migrated + backup-carried
+- Headless E2E with a D-Bus notification catcher: verified generic /
+  titled / locked payload bytes, fired flags, picker, and toggle live
+
 ## Phase 7 — OS keyring quick-unlock ✅
 
 - `keyring` crate (Windows Credential Manager / Secret Service via
