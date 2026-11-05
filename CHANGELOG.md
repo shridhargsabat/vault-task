@@ -3,6 +3,14 @@
 All notable changes to VaultTask are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [Unreleased]
+
+### Fixed
+
+- Tray icon too small on dark top bars: dedicated full-bleed tray asset
+  (`icons/tray-icon.png`, oversized glyph) embedded in the binary instead
+  of the padded app icon, with fallback to the default window icon
+
 ## [0.4.0] - 2026-11-05
 
 ### Added

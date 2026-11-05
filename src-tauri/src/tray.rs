@@ -11,6 +11,7 @@
 
 use tauri::{
     AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, Runtime, WebviewWindow,
+    image::Image as TauriImage,
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
 };
@@ -270,16 +271,32 @@ pub fn build_tray_menu<R: Runtime>(app: &AppHandle<R>, locked: bool) -> tauri::R
     Menu::with_items(app, &[&open, &maximize, &lock, &check_updates, &quit])
 }
 
+/// Dedicated tray asset (full-bleed tile, oversized glyph — the padded
+/// app icon reads tiny on dark top bars). Compile-time embedded, so a
+/// missing file breaks the build, never the installed app.
+const TRAY_ICON_PNG: &[u8] = include_bytes!("../icons/tray-icon.png");
+
+/// Tray icon: embedded asset first, default window icon as fallback.
+/// Never a startup failure — worst case is the old (small) icon.
+fn tray_icon<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<TauriImage<'_>> {
+    if let Ok(img) = image::load_from_memory(TRAY_ICON_PNG) {
+        let rgba = img.into_rgba8();
+        let (w, h) = (rgba.width(), rgba.height());
+        return Ok(TauriImage::new_owned(rgba.into_raw(), w, h));
+    }
+    Ok(app
+        .default_window_icon()
+        .ok_or_else(|| std::io::Error::other("no tray icon available"))?
+        .clone())
+}
+
 /// Build the persistent tray icon with its context menu.
 /// Returns Err (logged by the caller) when no tray host exists.
 pub fn create_tray<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     // Vaults boot locked (no in-memory key until unlock).
     let menu = build_tray_menu(app, true)?;
 
-    let icon = app
-        .default_window_icon()
-        .ok_or_else(|| std::io::Error::other("no default window icon for tray"))?
-        .clone();
+    let icon = tray_icon(app)?;
 
     TrayIconBuilder::with_id("main-tray")
         .icon(icon)
@@ -394,5 +411,16 @@ mod tests {
         assert!(tray_state_changed(&mut last, false));
         assert!(!tray_state_changed(&mut last, false));
         assert!(tray_state_changed(&mut last, true));
+    }
+
+    #[test]
+    fn embedded_tray_icon_decodes_to_expected_size() {
+        let img = image::load_from_memory(TRAY_ICON_PNG).expect("tray PNG decodes");
+        let rgba = img.into_rgba8();
+        assert_eq!((rgba.width(), rgba.height()), (64, 64));
+        // Sanity: mostly-opaque tile, not a blank/transparent image.
+        let opaque = rgba.pixels().filter(|p| p[3] > 128).count() as f64;
+        let total = rgba.pixels().len() as f64;
+        assert!(opaque / total > 0.5, "tray icon unexpectedly transparent");
     }
 }
