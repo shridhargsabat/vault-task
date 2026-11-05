@@ -5,6 +5,16 @@
 Tauri v2 (Rust + React 18 + TypeScript + Tailwind + Zustand) desktop app for
 Windows 11, Ubuntu 24.04+, and Fedora 41+.
 
+## Screenshots
+
+![Demo: quick-add, drawer, maximize, Markdown preview, lock & unlock](docs/screenshots/vaulttask-demo.gif)
+
+| Tray popover + drawer | Maximized workspace | Lock screen |
+|---|---|---|
+| ![Tray flyout with side-pane drawer](docs/screenshots/tray-popover.png) | ![3-column workspace](docs/screenshots/hero-workspace.png) | ![Lock screen with keyring quick-unlock](docs/screenshots/lock-screen.png) |
+
+![Demo: 30s idle auto-locks, PIN unlocks](docs/screenshots/auto-lock-demo.gif)
+
 ## Release
 
 CI (`ci.yml`) runs on every push to `main` and every PR targeting `main`:
