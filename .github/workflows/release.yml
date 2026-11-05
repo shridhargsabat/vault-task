@@ -161,6 +161,23 @@ jobs:
           cd artifacts
           sha256sum *.msi *.exe *.deb *.rpm *.AppImage > SHA256SUMS.txt
           cat SHA256SUMS.txt
+      # tauri-bundler signs updater targets (nsis/appimage/deb/msi) but NOT
+      # the rpm — and the Fedora upload only ships *.rpm. Sign it here with
+      # the same release key so the PackageKit flow can verify it in-app.
+      # (Safe pattern: secret via env, never interpolated into the script.)
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: sign rpm for package updates
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          set -u
+          mapfile -t RPMS < <(ls artifacts/*.rpm)
+          [ "${#RPMS[@]}" -eq 1 ] || { echo "expected 1 rpm, found ${#RPMS[@]}"; exit 1; }
+          npx -y @tauri-apps/cli@2 signer sign "${RPMS[0]}"
+          [ -f "${RPMS[0]}.sig" ] || { echo "rpm signing produced no .sig"; exit 1; }
       # The v2 updater installs bundles directly (nsis/appimage are
       # self-contained), so the bundler emits only .sig sidecars — no
       # latest.json. Generate the manifest here (tauri-action style):
@@ -178,6 +195,14 @@ jobs:
           [ "${#APPS[@]}" -eq 1 ] || { echo "expected 1 AppImage, found ${#APPS[@]}"; exit 1; }
           [ -f "${EXES[0]}.sig" ] || { echo "missing ${EXES[0]}.sig"; exit 1; }
           [ -f "${APPS[0]}.sig" ] || { echo "missing ${APPS[0]}.sig"; exit 1; }
+          # Native packages for the in-app PackageKit flow (rpm/deb can't
+          # ride latest.json — the plugin schema has fixed platform keys).
+          mapfile -t RPMS < <(ls artifacts/*.rpm)
+          mapfile -t DEBS < <(ls artifacts/*.deb)
+          [ "${#RPMS[@]}" -eq 1 ] || { echo "expected 1 rpm, found ${#RPMS[@]}"; exit 1; }
+          [ "${#DEBS[@]}" -eq 1 ] || { echo "expected 1 deb, found ${#DEBS[@]}"; exit 1; }
+          [ -f "${RPMS[0]}.sig" ] || { echo "missing ${RPMS[0]}.sig"; exit 1; }
+          [ -f "${DEBS[0]}.sig" ] || { echo "missing ${DEBS[0]}.sig"; exit 1; }
           VER="${TAG#v}"
           PUB_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           NOTES=$(awk "/^## \[$VER\]/{flag=1;next}/^## \[/{flag=0}flag" CHANGELOG.md | head -c 4000)
@@ -195,6 +220,19 @@ jobs:
             > artifacts/latest.json
           jq -e '.version and (.platforms | length == 2)' artifacts/latest.json
           cat artifacts/latest.json
+          jq -n \
+            --arg version "$VER" --arg notes "$NOTES" --arg pub_date "$PUB_DATE" \
+            --arg rpm_sig "$(cat "${RPMS[0]}.sig")" \
+            --arg rpm_url "https://github.com/$REPO/releases/download/$TAG/$(basename "${RPMS[0]}")" \
+            --arg deb_sig "$(cat "${DEBS[0]}.sig")" \
+            --arg deb_url "https://github.com/$REPO/releases/download/$TAG/$(basename "${DEBS[0]}")" \
+            '{version: $version, notes: $notes, pub_date: $pub_date,
+              packages: {
+                "rpm": {signature: $rpm_sig, url: $rpm_url},
+                "deb": {signature: $deb_sig, url: $deb_url}}}' \
+            > artifacts/linux-packages.json
+          jq -e '.version and (.packages | length == 2)' artifacts/linux-packages.json
+          jq '{version, pub_date, keys: (.packages | keys)}' artifacts/linux-packages.json
       - name: publish
         uses: softprops/action-gh-release@v2
         with:

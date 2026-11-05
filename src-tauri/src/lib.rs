@@ -1,6 +1,7 @@
 pub(crate) mod commands;
 mod crypto;
 mod db;
+mod pkg_update;
 mod scheduler;
 pub(crate) mod state;
 mod tray;
@@ -108,6 +109,10 @@ pub fn run() {
             commands::export_decrypted_markdown,
             commands::enable_keyring_unlock,
             commands::unlock_with_keyring,
+            pkg_update::get_install_info,
+            pkg_update::check_system_update_cmd,
+            pkg_update::download_system_update_cmd,
+            pkg_update::install_system_package_cmd,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
