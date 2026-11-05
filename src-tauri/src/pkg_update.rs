@@ -341,7 +341,36 @@ pub fn resolve_pkcon() -> Option<PathBuf> {
 }
 
 /// Thin env wrapper over [`classify_install`] — the only untested seam.
+/// TEST HATCH: `VAULT_TASK_INSTALL_KIND` (system-package | msi-assisted |
+/// plugin-managed | manual) forces the reported kind so headless E2E can
+/// drive the native updater flows (dev binaries classify as Manual).
 pub fn detect_install() -> InstallInfo {
+    if let Ok(forced) = std::env::var("VAULT_TASK_INSTALL_KIND") {
+        let kind = match forced.as_str() {
+            "system-package" => InstallKind::SystemPackage,
+            "msi-assisted" => InstallKind::MsiAssisted,
+            "plugin-managed" => InstallKind::PluginManaged,
+            "manual" => InstallKind::Manual,
+            _ => return classify_fallback(),
+        };
+        return InstallInfo {
+            kind,
+            family: if kind == InstallKind::SystemPackage {
+                std::fs::read_to_string("/etc/os-release")
+                    .ok()
+                    .as_deref()
+                    .and_then(distro_family_from_os_release)
+            } else {
+                None
+            },
+            packagekit: resolve_pkcon().is_some(),
+        };
+    }
+    classify_fallback()
+}
+
+/// Real environment classification (no overrides).
+fn classify_fallback() -> InstallInfo {
     let appimage = std::env::var_os("APPIMAGE").is_some();
     let exe = std::env::current_exe()
         .map(|p| p.to_string_lossy().into_owned())
@@ -377,12 +406,39 @@ fn fetch_capped(url: &str, max_bytes: u64) -> Result<Vec<u8>, String> {
     fetch_capped_with_timeout(url, max_bytes, HTTP_TIMEOUT)
 }
 
+/// Update fetches only ever touch GitHub release artifacts. TEST HATCH:
+/// when `VAULT_TASK_PKG_MANIFEST_URL` overrides the manifest, the
+/// fixture's own origin is additionally allowed (the override already
+/// fully controls the manifest, so same-origin packages add no trust).
+fn update_url_allowed(url: &str) -> bool {
+    if url.starts_with("https://github.com/") {
+        return true;
+    }
+    if let Ok(manifest) = std::env::var("VAULT_TASK_PKG_MANIFEST_URL")
+        && !manifest.is_empty()
+        && let Some(origin) = url_origin(&manifest)
+    {
+        return url.starts_with(&origin);
+    }
+    false
+}
+
+/// Scheme + authority prefix of a URL (e.g. `http://127.0.0.1:8899`).
+fn url_origin(url: &str) -> Option<String> {
+    let (scheme, rest) = url.split_once("://")?;
+    let authority = rest.split('/').next()?;
+    if scheme.is_empty() || authority.is_empty() {
+        return None;
+    }
+    Some(format!("{scheme}://{authority}"))
+}
+
 fn fetch_capped_with_timeout(
     url: &str,
     max_bytes: u64,
     timeout: Duration,
 ) -> Result<Vec<u8>, String> {
-    if !url.starts_with("https://github.com/") {
+    if !update_url_allowed(url) {
         return Err("refusing non-GitHub update URL".to_string());
     }
     let res = http_agent_with_timeout(timeout)
@@ -477,11 +533,21 @@ pub fn check_against(
     }))
 }
 
+/// Manifest URL with a test hatch: `VAULT_TASK_PKG_MANIFEST_URL` (when
+/// set and non-empty) overrides the release manifest so headless E2E can
+/// serve a fixture locally. Production builds never set it.
+fn packages_manifest_url() -> String {
+    std::env::var("VAULT_TASK_PKG_MANIFEST_URL")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| PACKAGES_MANIFEST_URL.to_string())
+}
+
 /// Fetch the manifest and check for an update (thin wrapper).
 pub fn check_system_update() -> Result<Option<SystemUpdate>, String> {
     let info = detect_install();
     let (asset_key, extension) = update_asset_spec(&info)?;
-    let bytes = fetch_capped(PACKAGES_MANIFEST_URL, MAX_MANIFEST_BYTES)?;
+    let bytes = fetch_capped(&packages_manifest_url(), MAX_MANIFEST_BYTES)?;
     let text = String::from_utf8(bytes).map_err(|_| "update manifest invalid".to_string())?;
     check_against(&text, asset_key, extension, env!("CARGO_PKG_VERSION"))
 }
@@ -717,6 +783,70 @@ pub fn launch_system_installer_cmd(path: String) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn url_allowlist_github_plus_fixture_origin() {
+        assert_eq!(
+            url_origin("http://127.0.0.1:8899/linux-packages.json"),
+            Some("http://127.0.0.1:8899".to_string())
+        );
+        assert_eq!(url_origin("not a url"), None);
+        // SAFETY: no other test reads or writes this var.
+        unsafe {
+            std::env::remove_var("VAULT_TASK_PKG_MANIFEST_URL");
+        }
+        assert!(update_url_allowed(
+            "https://github.com/shridhargsabat/vault-task/releases/download/v9/f.rpm"
+        ));
+        assert!(!update_url_allowed("http://127.0.0.1:8899/fixture.rpm"));
+        unsafe {
+            std::env::set_var(
+                "VAULT_TASK_PKG_MANIFEST_URL",
+                "http://127.0.0.1:8899/linux-packages.json",
+            );
+        }
+        assert!(update_url_allowed("http://127.0.0.1:8899/fixture.rpm"));
+        assert!(!update_url_allowed("http://127.0.0.1:9999/other.rpm"));
+        unsafe {
+            std::env::remove_var("VAULT_TASK_PKG_MANIFEST_URL");
+        }
+    }
+
+    #[test]
+    fn detect_install_hatch_forces_kind() {
+        // SAFETY: no other test reads or writes this var.
+        unsafe {
+            std::env::set_var("VAULT_TASK_INSTALL_KIND", "system-package");
+        }
+        let info = detect_install();
+        unsafe {
+            std::env::remove_var("VAULT_TASK_INSTALL_KIND");
+        }
+        assert_eq!(info.kind, InstallKind::SystemPackage);
+        // Family follows the real machine (this lab is Ubuntu → Deb).
+        #[cfg(target_os = "linux")]
+        assert_eq!(info.family, Some(DistroFamily::Deb));
+    }
+
+    #[test]
+    fn manifest_url_hatch_defaults_and_overrides() {
+        // SAFETY: no other test reads or writes this var, so no racing
+        // access is possible even with the threaded test runner.
+        unsafe {
+            std::env::remove_var("VAULT_TASK_PKG_MANIFEST_URL");
+        }
+        assert_eq!(packages_manifest_url(), PACKAGES_MANIFEST_URL);
+        unsafe {
+            std::env::set_var(
+                "VAULT_TASK_PKG_MANIFEST_URL",
+                "http://127.0.0.1:9/fixture.json",
+            );
+        }
+        assert_eq!(packages_manifest_url(), "http://127.0.0.1:9/fixture.json");
+        unsafe {
+            std::env::remove_var("VAULT_TASK_PKG_MANIFEST_URL");
+        }
+    }
 
     #[test]
     fn classify_appimage_uses_plugin_flow() {
