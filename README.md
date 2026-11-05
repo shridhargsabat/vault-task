@@ -115,7 +115,9 @@ Prereqs everywhere: Rust stable via rustup + Node 20+.
 - `sudo dnf install webkit2gtk4.1-devel libappindicator-gtk3-devel librsvg2-devel openssl-devel @development-tools`
 - `npm run tauri build -- --bundles rpm appimage`
 - GNOME tray icons need the AppIndicator shell extension (the `.rpm`
-  recommends `gnome-shell-extension-appindicator`)
+  recommends `gnome-shell-extension-appindicator`): after install run
+  `gnome-extensions enable appindicatorsupport@rgcjonas.gmail.com`
+  and log out/in once (Wayland only loads it at login)
 
 ## Phase 4 — Auto-lock engine + lock screens ✅
 
