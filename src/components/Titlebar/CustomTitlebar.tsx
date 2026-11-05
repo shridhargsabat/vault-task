@@ -1,12 +1,17 @@
+import { useState } from "react";
 import {
   Lock,
   Maximize2,
   Minimize2,
+  MoreHorizontal,
   Pin,
   PinOff,
+  Power,
+  RefreshCw,
   Search,
   X,
 } from "lucide-react";
+import { exit } from "@tauri-apps/plugin-process";
 import { useVaultStore } from "../../store/useVaultStore";
 import { useWindowMode } from "../../hooks/useWindowMode";
 
@@ -40,6 +45,8 @@ export function CustomTitlebar() {
     useWindowMode();
   const lockVault = useVaultStore((s) => s.lockVault);
   const locked = useVaultStore((s) => s.status?.locked ?? true);
+  const requestUpdateCheck = useVaultStore((s) => s.requestUpdateCheck);
+  const [menuOpen, setMenuOpen] = useState(false);
 
   const focusSearch = () => {
     // Phase 3 list UI listens for this to focus its search input.
@@ -47,7 +54,7 @@ export function CustomTitlebar() {
   };
 
   return (
-    <header className="flex h-11 shrink-0 items-center gap-0.5 border-b border-neutral-800 bg-neutral-900/90 px-1.5">
+    <header className="relative flex h-11 shrink-0 items-center gap-0.5 border-b border-neutral-800 bg-neutral-900/90 px-1.5">
       <span
         title={locked ? "Vault locked" : "Vault unlocked"}
         className={`ml-1 h-2 w-2 shrink-0 rounded-full ${
@@ -86,6 +93,38 @@ export function CustomTitlebar() {
       <BarButton title="Hide to tray" onClick={() => void hideToTray()}>
         <X className="h-4 w-4" />
       </BarButton>
+      <BarButton
+        title="More actions"
+        onClick={() => setMenuOpen((v) => !v)}
+        active={menuOpen}
+      >
+        <MoreHorizontal className="h-4 w-4" />
+      </BarButton>
+      {menuOpen && (
+        <>
+          {/* Click-outside dismiss (app-native, no OS menus). */}
+          <div className="fixed inset-0 z-40" onClick={() => setMenuOpen(false)} />
+          <div className="absolute right-1.5 top-11 z-50 w-52 rounded-lg border border-neutral-700 bg-neutral-900 py-1 shadow-xl">
+            <button
+              onClick={() => {
+                setMenuOpen(false);
+                requestUpdateCheck();
+              }}
+              className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-neutral-200 hover:bg-neutral-800"
+            >
+              <RefreshCw className="h-3.5 w-3.5 text-neutral-400" />
+              Check for Updates
+            </button>
+            <button
+              onClick={() => void exit(0)}
+              className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-red-300 hover:bg-neutral-800"
+            >
+              <Power className="h-3.5 w-3.5" />
+              Quit VaultTask
+            </button>
+          </div>
+        </>
+      )}
     </header>
   );
 }

@@ -165,9 +165,13 @@ Prereqs everywhere: Rust stable via rustup + Node 20+.
 
 ## Phase 2 — Tray + dual-mode window manager ✅
 
-- `src-tauri/src/tray.rs` — `TrayIconBuilder` (Open / Maximize / Lock / Quit),
+- `src-tauri/src/tray.rs` — menu-less `TrayIconBuilder` (left-click
+  toggles the flyout OneDrive-style; Quit/updates live in the app UI —
+  a tray menu would swallow left-clicks on GNOME),
   OS-aware popover positioner (`TrayCenter` Windows, `TopRight` GNOME,
   `BottomRight` KDE) + 12px work-area fallback, Ctrl+Shift+Space summon
+  (Wayland note: the compositor owns placement, so tray-adjacent
+  anchoring is best-effort there — the flyout opens focused regardless)
 - Close-to-tray + focus-loss auto-hide (unless pinned) via `on_window_event`
 - IPC: `set_window_mode`, `toggle_maximize_mode`, `hide_to_tray`, `set_pinned`
 - `src/components/Titlebar/CustomTitlebar.tsx` + `src/hooks/useWindowMode.ts`

@@ -28,7 +28,7 @@ function App() {
     void refreshStatus();
   }, [refreshStatus]);
 
-  // Backend-initiated locks (watchdog, tray menu, OS session lock) must
+  // Backend-initiated locks (watchdog, titlebar, OS session lock) must
   // purge the frontend: zero plaintext in tasks, selection, search, modal.
   useEffect(() => {
     let unlisten: (() => void) | undefined;
@@ -41,21 +41,6 @@ function App() {
       clearSensitiveData();
       setSettingsOpen(false);
       void refresh();
-    })
-      .then((fn) => {
-        unlisten = fn;
-      })
-      .catch(() => {
-        /* not running under Tauri (browser preview) */
-      });
-    return () => unlisten?.();
-  }, []);
-
-  // Tray "Check for Updates..." opens Settings and kicks off a check.
-  useEffect(() => {
-    let unlisten: (() => void) | undefined;
-    listen("updater://check", () => {
-      useVaultStore.getState().requestUpdateCheck();
     })
       .then((fn) => {
         unlisten = fn;

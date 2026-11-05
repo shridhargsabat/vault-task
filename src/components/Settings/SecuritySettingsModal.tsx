@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Check, Settings2, X } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
+import { exit } from "@tauri-apps/plugin-process";
 import { useVaultStore } from "../../store/useVaultStore";
 import type { BackupResult } from "../../types/models";
 import { UpdatesCard } from "./UpdatesCard";
@@ -431,6 +432,15 @@ export function SecuritySettingsModal() {
               {backupMessage.text}
             </p>
           )}
+        </section>
+
+        <section className="border-t border-neutral-800 pt-3">
+          <button
+            onClick={() => void exit(0)}
+            className="w-full rounded-md bg-red-900/60 px-3 py-2 text-xs font-medium text-red-100 hover:bg-red-800"
+          >
+            Quit VaultTask
+          </button>
         </section>
       </div>
     </div>

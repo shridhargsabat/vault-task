@@ -12,7 +12,6 @@
 use tauri::{
     AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, Runtime, WebviewWindow,
     image::Image as TauriImage,
-    menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
 };
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
@@ -163,7 +162,7 @@ pub fn toggle_visibility<R: Runtime>(app: &AppHandle<R>, window: &WebviewWindow<
 }
 
 /// Lock the vault and notify the frontend to purge. Funnels every lock
-/// path (tray menu, watchdog, OS session lock, Ctrl+L) through one place.
+/// path (titlebar, watchdog, OS session lock, Ctrl+L) through one place.
 pub fn lock_session_and_emit<R: Runtime>(app: &AppHandle<R>) {
     if let Ok(mut session) = app.state::<AppState>().session.lock() {
         session.lock();
@@ -190,11 +189,11 @@ pub fn hide_main_window<R: Runtime>(app: &AppHandle<R>) {
     }
 }
 
-/// Sync tray tooltip + menu with the current lock state. Best-effort:
+/// Sync the tray tooltip with the current lock state. Best-effort:
 /// silently no-ops when no tray host exists (headless tests, bare GNOME).
-/// Skips redundant pushes: rebuilding the StatusNotifier/dbusmenu object
-/// every watchdog tick makes GNOME's AppIndicator popup visibly flash
-/// while open, so the menu is only replaced on actual state changes.
+/// The tray carries no menu (OneDrive-style: left-click toggles the flyout,
+/// and GNOME shells show an item's menu on left-click whenever one exists),
+/// so only the tooltip is pushed — still change-gated to avoid redundant IPC.
 pub fn refresh_tray_state<R: Runtime>(app: &AppHandle<R>) {
     let locked = app
         .state::<AppState>()
@@ -216,9 +215,6 @@ pub fn refresh_tray_state<R: Runtime>(app: &AppHandle<R>) {
         } else {
             "VaultTask"
         }));
-        if let Ok(menu) = build_tray_menu(app, locked) {
-            let _ = tray.set_menu(Some(menu));
-        }
     }
 }
 
@@ -240,36 +236,8 @@ fn tray_state_changed(last: &mut Option<bool>, locked: bool) -> bool {
 }
 
 // ---------------------------------------------------------------------------
-// Tray icon
+// Tray icon (menu-less: left-click toggles the flyout, OneDrive-style)
 // ---------------------------------------------------------------------------
-
-/// Build the tray context menu for the given lock state.
-pub fn build_tray_menu<R: Runtime>(app: &AppHandle<R>, locked: bool) -> tauri::Result<Menu<R>> {
-    let open = MenuItem::with_id(app, "tray-open", "Open VaultTask", true, None::<&str>)?;
-    let maximize = MenuItem::with_id(
-        app,
-        "tray-maximize",
-        "Maximize Workspace",
-        true,
-        None::<&str>,
-    )?;
-    let lock = MenuItem::with_id(
-        app,
-        "tray-lock",
-        if locked { "Vault Locked" } else { "Lock Vault" },
-        !locked,
-        None::<&str>,
-    )?;
-    let quit = MenuItem::with_id(app, "tray-quit", "Quit", true, None::<&str>)?;
-    let check_updates = MenuItem::with_id(
-        app,
-        "tray-check-updates",
-        "Check for Updates...",
-        true,
-        None::<&str>,
-    )?;
-    Menu::with_items(app, &[&open, &maximize, &lock, &check_updates, &quit])
-}
 
 /// Dedicated tray asset (full-bleed tile, oversized glyph — the padded
 /// app icon reads tiny on dark top bars). Compile-time embedded, so a
@@ -290,43 +258,17 @@ fn tray_icon<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<TauriImage<'_>> {
         .clone())
 }
 
-/// Build the persistent tray icon with its context menu.
+/// Build the persistent menu-less tray icon. Left-click toggles the
+/// flyout (OneDrive-style); the item carries no menu because GNOME shells
+/// show an item's menu on left-click whenever one exists, swallowing the
+/// click we need. Quit/lock/updates live in the app UI instead.
 /// Returns Err (logged by the caller) when no tray host exists.
 pub fn create_tray<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
-    // Vaults boot locked (no in-memory key until unlock).
-    let menu = build_tray_menu(app, true)?;
-
     let icon = tray_icon(app)?;
 
     TrayIconBuilder::with_id("main-tray")
         .icon(icon)
         .tooltip("VaultTask (Locked)")
-        .menu(&menu)
-        .show_menu_on_left_click(false)
-        .on_menu_event(|app, event| {
-            let id = event.id.as_ref();
-            match id {
-                "tray-open" => {
-                    if let Some(w) = app.get_webview_window("main") {
-                        let _ = show_popover(app, &w);
-                    }
-                }
-                "tray-maximize" => {
-                    if let Some(w) = app.get_webview_window("main") {
-                        let _ = show_maximized(app, &w);
-                    }
-                }
-                "tray-lock" => lock_session_and_emit(app),
-                "tray-check-updates" => {
-                    if let Some(w) = app.get_webview_window("main") {
-                        let _ = show_popover(app, &w);
-                    }
-                    let _ = app.emit("updater://check", ());
-                }
-                "tray-quit" => app.exit(0),
-                _ => {}
-            }
-        })
         .on_tray_icon_event(|tray, event| {
             // Feed tray geometry to the positioner (enables TrayCenter).
             tauri_plugin_positioner::on_tray_event(tray.app_handle(), &event);
