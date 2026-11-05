@@ -3,6 +3,22 @@
 All notable changes to VaultTask are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [Unreleased]
+
+### Fixed
+
+- In-app PackageKit/MSI update failed at Download with
+  `download_system_update_cmd missing required key file_name`: the
+  frontend sent camelCase `fileName` (matching the struct's serialized
+  shape) but Tauri matches command args exactly (`file_name`). All
+  other updater invokes audited — no further mismatches. Dev binaries
+  classify as Manual, so E2E never drove this path; two test-only env
+  hatches (`VAULT_TASK_INSTALL_KIND`,
+  `VAULT_TASK_PKG_MANIFEST_URL` + same-origin allowlist) now let
+  headless E2E run check → download → signature-verify against a
+  local fixture (proven live: fixture v9.9.9,
+  "Download complete — signature verified").
+
 ## [0.4.3] - 2026-11-05
 
 ### Fixed

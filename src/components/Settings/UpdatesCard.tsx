@@ -139,9 +139,11 @@ export function UpdatesCard() {
       setPhase("downloading");
       setProgress(null);
       try {
+        // NOTE: Tauri matches command args EXACTLY — the Rust param is
+        // `file_name` even though SystemUpdate serializes camelCase.
         const stagedPath = await invoke<string>("download_system_update_cmd", {
           url: pkg.url,
-          fileName: pkg.fileName,
+          file_name: pkg.fileName,
           signature: pkg.signature,
         });
         pkgRef.current = { ...pkg, stagedPath };
