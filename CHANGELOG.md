@@ -7,6 +7,9 @@ All notable changes to VaultTask are documented here. The format follows
 
 ### Added
 
+- Unique VaultTask app logo (emerald vault dial + check on dark tile,
+  `assets/logo.svg` source): full icon set regenerated via `tauri icon`
+  (png/ico/icns + store/mobile variants) replacing the stock Tauri icon
 - In-app updates for rpm/deb installs: the Updates card detects
   system-package installs, downloads the distro-native asset from
   `linux-packages.json`, verifies its minisign signature, and installs
