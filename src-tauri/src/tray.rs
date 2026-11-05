@@ -9,6 +9,8 @@
 //! that deny global shortcuts) the app keeps running and the window can
 //! still be summoned from the app grid / dash.
 
+#[cfg(target_os = "linux")]
+use tauri::menu::{Menu, MenuItem};
 use tauri::{
     AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, Runtime, WebviewWindow,
     image::Image as TauriImage,
@@ -191,9 +193,8 @@ pub fn hide_main_window<R: Runtime>(app: &AppHandle<R>) {
 
 /// Sync the tray tooltip with the current lock state. Best-effort:
 /// silently no-ops when no tray host exists (headless tests, bare GNOME).
-/// The tray carries no menu (OneDrive-style: left-click toggles the flyout,
-/// and GNOME shells show an item's menu on left-click whenever one exists),
-/// so only the tooltip is pushed — still change-gated to avoid redundant IPC.
+/// The Linux menu is static (built once, never rebuilt), so only the
+/// tooltip is pushed here — still change-gated to avoid redundant IPC.
 pub fn refresh_tray_state<R: Runtime>(app: &AppHandle<R>) {
     let locked = app
         .state::<AppState>()
@@ -236,8 +237,37 @@ fn tray_state_changed(last: &mut Option<bool>, locked: bool) -> bool {
 }
 
 // ---------------------------------------------------------------------------
-// Tray icon (menu-less: left-click toggles the flyout, OneDrive-style)
+// Tray icon (Linux: minimal static menu; Win/Mac: menu-less click-toggle)
 // ---------------------------------------------------------------------------
+
+/// Linux-only tray menu. Two platform facts force this split. First, the
+/// GNOME AppIndicator extension only *shows* items whose `Menu` property is
+/// a real dbusmenu path (`/NO_DBUSMENU` never reaches its `ready` gate, so
+/// a menu-less item is silently invisible). Second, libappindicator never
+/// delivers click events to the app (menu activation only), so the flyout
+/// toggle must live in the menu.
+/// Labels are static on purpose: the menu is built once at startup and never
+/// rebuilt, preserving the push-only-on-change guarantee (rebuilding the
+/// menu every watchdog tick caused the GNOME menu flash).
+#[cfg(target_os = "linux")]
+fn build_tray_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
+    let toggle = MenuItem::with_id(
+        app,
+        "tray-toggle",
+        "Show / Hide VaultTask",
+        true,
+        None::<&str>,
+    )?;
+    let check_updates = MenuItem::with_id(
+        app,
+        "tray-check-updates",
+        "Check for Updates...",
+        true,
+        None::<&str>,
+    )?;
+    let quit = MenuItem::with_id(app, "tray-quit", "Quit", true, None::<&str>)?;
+    Menu::with_items(app, &[&toggle, &check_updates, &quit])
+}
 
 /// Dedicated tray asset (full-bleed tile, oversized glyph — the padded
 /// app icon reads tiny on dark top bars). Compile-time embedded, so a
@@ -258,15 +288,18 @@ fn tray_icon<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<TauriImage<'_>> {
         .clone())
 }
 
-/// Build the persistent menu-less tray icon. Left-click toggles the
-/// flyout (OneDrive-style); the item carries no menu because GNOME shells
-/// show an item's menu on left-click whenever one exists, swallowing the
-/// click we need. Quit/lock/updates live in the app UI instead.
+/// Build the persistent tray icon: full-bleed asset, lock-state tooltip.
+/// Linux attaches the minimal static menu (required for the GNOME
+/// AppIndicator extension to show the item at all); Windows/macOS stay
+/// menu-less so left-click toggles the flyout OneDrive-style.
 /// Returns Err (logged by the caller) when no tray host exists.
 pub fn create_tray<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     let icon = tray_icon(app)?;
 
-    TrayIconBuilder::with_id("main-tray")
+    #[cfg(target_os = "linux")]
+    let menu = build_tray_menu(app)?;
+
+    let builder = TrayIconBuilder::with_id("main-tray")
         .icon(icon)
         .tooltip("VaultTask (Locked)")
         .on_tray_icon_event(|tray, event| {
@@ -283,8 +316,30 @@ pub fn create_tray<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
                     toggle_visibility(app, &w);
                 }
             }
-        })
-        .build(app)?;
+        });
+
+    // Linux: menu activation is the only interaction libappindicator
+    // delivers (clicks never reach on_tray_icon_event).
+    #[cfg(target_os = "linux")]
+    let builder = builder
+        .menu(&menu)
+        .on_menu_event(|app, event| match event.id.as_ref() {
+            "tray-toggle" => {
+                if let Some(w) = app.get_webview_window("main") {
+                    toggle_visibility(app, &w);
+                }
+            }
+            "tray-check-updates" => {
+                if let Some(w) = app.get_webview_window("main") {
+                    let _ = show_popover(app, &w);
+                }
+                let _ = app.emit("updater://check", ());
+            }
+            "tray-quit" => app.exit(0),
+            _ => {}
+        });
+
+    builder.build(app)?;
     Ok(())
 }
 

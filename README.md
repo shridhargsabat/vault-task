@@ -178,9 +178,13 @@ Prereqs everywhere: Rust stable via rustup + Node 20+.
 
 ## Phase 2 — Tray + dual-mode window manager ✅
 
-- `src-tauri/src/tray.rs` — menu-less `TrayIconBuilder` (left-click
-  toggles the flyout OneDrive-style; Quit/updates live in the app UI —
-  a tray menu would swallow left-clicks on GNOME),
+- `src-tauri/src/tray.rs` — platform-split tray: Linux carries a minimal
+  static menu (Show/Hide, Check for Updates, Quit) because the GNOME
+  AppIndicator extension only shows items with a real dbusmenu path
+  (`/NO_DBUSMENU` never reaches its `ready` gate) and libappindicator
+  never delivers click events; Windows/macOS stay menu-less so
+  left-click toggles the flyout OneDrive-style (Quit/updates also live
+  in the app UI),
   OS-aware popover positioner (`TrayCenter` Windows, `TopRight` GNOME,
   `BottomRight` KDE) + 12px work-area fallback, Ctrl+Shift+Space summon
   (Wayland note: the compositor owns placement, so tray-adjacent
