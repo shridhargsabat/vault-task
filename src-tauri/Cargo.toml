@@ -1,6 +1,6 @@
 [package]
 name = "vault-task"
-version = "0.4.3"
+version = "0.4.4"
 description = "VaultTask — encrypted tray task manager with Markdown notes"
 license = "MIT OR Apache-2.0"
 authors = ["you"]
