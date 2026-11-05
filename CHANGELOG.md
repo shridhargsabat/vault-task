@@ -5,6 +5,15 @@ All notable changes to VaultTask are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- In-app updates for rpm/deb installs: the Updates card detects
+  system-package installs, downloads the distro-native asset from
+  `linux-packages.json`, verifies its minisign signature, and installs
+  it via PackageKit (`pkcon install-local`, native password prompt),
+  then restarts — no terminal needed; falls back to manual
+  instructions when PackageKit is missing
+
 ### Fixed
 
 - Tray menu no longer flashes on Fedora GNOME: `refresh_tray_state`

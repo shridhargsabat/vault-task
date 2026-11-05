@@ -37,6 +37,14 @@ three package versions, builds `.msi` + `-setup.exe` on Windows,
 - E2E note: the app needs a session bus to boot headless
   (`dbus-daemon --session --fork --print-address`, exported as
   `DBUS_SESSION_BUS_ADDRESS`) — without one it idles pre-setup
+- Native packages (rpm/deb) self-update via PackageKit, not the
+  plugin (AppImage-only upstream): `pkg_update.rs` detects the
+  install kind + distro family, `linux-packages.json` (published
+  beside `latest.json`; the rpm is signed in CI since the bundler
+  only signs updater targets) carries asset URLs + minisign
+  signatures, every payload is signature-verified before
+  `pkcon install-local` runs; manual-download fallback when
+  PackageKit is absent or the distro is unknown
 
 ## Phase 9 — Scheduled reminders + privacy-safe notifications ✅
 
