@@ -56,6 +56,7 @@ strip = true
 
 [target."cfg(windows)".dependencies]
 keyring = { version = "3", features = ["windows-native"] }
+winreg = "0.56"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # sync-secret-service: D-Bus Secret Service (GNOME Keyring / KWallet);

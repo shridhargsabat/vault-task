@@ -5,7 +5,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { check } from "@tauri-apps/plugin-updater";
 import type { Update } from "@tauri-apps/plugin-updater";
-import { relaunch } from "@tauri-apps/plugin-process";
+import { exit, relaunch } from "@tauri-apps/plugin-process";
 import { useVaultStore } from "../../store/useVaultStore";
 
 type Phase =
@@ -18,7 +18,7 @@ type Phase =
   | "installing"
   | "error";
 
-type InstallKind = "plugin-managed" | "system-package" | "manual";
+type InstallKind = "plugin-managed" | "system-package" | "msi-assisted" | "manual";
 
 interface InstallInfo {
   kind: InstallKind;
@@ -40,7 +40,7 @@ interface PkgUpdateState extends SystemUpdate {
 
 const RELEASES_URL = "https://github.com/shridhargsabat/vault-task/releases";
 
-/** Updates & Version card: plugin flow (NSIS/AppImage) or PackageKit flow (rpm/deb). */
+/** Updates & Version card: plugin (NSIS/AppImage), PackageKit (rpm/deb), or MSI assist. */
 export function UpdatesCard() {
   const nonce = useVaultStore((s) => s.updaterCheckNonce);
   const [version, setVersion] = useState("…");
@@ -66,6 +66,9 @@ export function UpdatesCard() {
   }, []);
 
   const isPkgFlow = install?.kind === "system-package";
+  const isMsiFlow = install?.kind === "msi-assisted";
+  // Both native flows share check/download; only the apply step differs.
+  const isNativeFlow = isPkgFlow || isMsiFlow;
 
   const doCheck = async () => {
     setPhase("checking");
@@ -77,7 +80,7 @@ export function UpdatesCard() {
     updateRef.current = null;
     pkgRef.current = null;
     try {
-      if (isPkgFlow) {
+      if (isNativeFlow) {
         const found = await invoke<SystemUpdate | null>("check_system_update_cmd");
         if (!found) {
           setPhase("uptodate");
@@ -108,7 +111,7 @@ export function UpdatesCard() {
     }
   };
 
-  // Tray "Check for Updates..." opens Settings and bumps the nonce.
+  // Titlebar "Check for Updates" opens Settings and bumps the nonce.
   useEffect(() => {
     if (nonce === seenNonce.current) return;
     seenNonce.current = nonce;
@@ -118,7 +121,7 @@ export function UpdatesCard() {
   }, [nonce]);
 
   const doDownload = async () => {
-    if (isPkgFlow) {
+    if (isNativeFlow) {
       const pkg = pkgRef.current;
       if (!pkg) return;
       setPhase("downloading");
@@ -163,6 +166,21 @@ export function UpdatesCard() {
   };
 
   const doInstall = async () => {
+    if (isMsiFlow) {
+      const pkg = pkgRef.current;
+      if (!pkg?.stagedPath) return;
+      setPhase("installing");
+      try {
+        // Wizard is detached; exit so no files are locked when the user
+        // clicks through (UAC prompt included).
+        await invoke("launch_system_installer_cmd", { path: pkg.stagedPath });
+        await exit(0);
+      } catch {
+        setPhase("error");
+        setMessage("Couldn't launch the installer. Please try again.");
+      }
+      return;
+    }
     if (isPkgFlow) {
       const pkg = pkgRef.current;
       if (!pkg?.stagedPath) return;
@@ -307,14 +325,20 @@ export function UpdatesCard() {
                 className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-md bg-emerald-600 py-1.5 text-xs font-medium text-white hover:bg-emerald-500"
               >
                 <RotateCcw className="h-3.5 w-3.5" />
-                {isPkgFlow ? "Install Update & Restart" : "Restart to Apply Update"}
+                {isMsiFlow
+                  ? "Install Update & Exit"
+                  : isPkgFlow
+                    ? "Install Update & Restart"
+                    : "Restart to Apply Update"}
               </button>
             ))}
           {phase === "installing" && (
             <p className="mt-2 text-center text-[11px] text-neutral-400">
-              {isPkgFlow
-                ? "Installing… a system password prompt may appear."
-                : "Installing… the app will restart."}
+              {isMsiFlow
+                ? "Opening the installer… VaultTask exits so files aren't locked."
+                : isPkgFlow
+                  ? "Installing… a system password prompt may appear."
+                  : "Installing… the app will restart."}
             </p>
           )}
         </>

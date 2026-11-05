@@ -5,6 +5,13 @@ All notable changes to VaultTask are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- MSI installs self-update in-app (assisted): the updater detects MSI
+  via the uninstall registry, verifies the new package against
+  `windows-packages.json`, then opens the MSI wizard and exits so no
+  files are locked (the Tauri plugin is NSIS-only on Windows)
+
 ### Changed
 
 - Releases ship msi + rpm installers only (testing focus); manifests

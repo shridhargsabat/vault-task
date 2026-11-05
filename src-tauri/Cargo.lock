@@ -5354,6 +5354,7 @@ dependencies = [
  "tokio",
  "ureq",
  "uuid",
+ "winreg",
  "zbus 5.19.0",
  "zeroize",
 ]

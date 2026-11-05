@@ -142,6 +142,20 @@ jobs:
           [ "${#RPMS[@]}" -eq 1 ] || { echo "expected 1 rpm, found ${#RPMS[@]}"; exit 1; }
           npx -y @tauri-apps/cli@2 signer sign "${RPMS[0]}"
           [ -f "${RPMS[0]}.sig" ] || { echo "rpm signing produced no .sig"; exit 1; }
+      # The bundler usually signs the msi itself (updater target) — but only
+      # the assisted flow consumes it now, so guarantee a .sig either way.
+      - name: sign msi for assisted updates
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          set -u
+          mapfile -t MSIS < <(ls artifacts/*.msi)
+          [ "${#MSIS[@]}" -eq 1 ] || { echo "expected 1 msi, found ${#MSIS[@]}"; exit 1; }
+          if [ ! -f "${MSIS[0]}.sig" ]; then
+            npx -y @tauri-apps/cli@2 signer sign "${MSIS[0]}"
+          fi
+          [ -f "${MSIS[0]}.sig" ] || { echo "msi signing produced no .sig"; exit 1; }
       # The v2 updater installs bundles directly (nsis/appimage are
       # self-contained), so the bundler emits only .sig sidecars — no
       # latest.json. Generate the manifest here (tauri-action style):
@@ -204,6 +218,26 @@ jobs:
             > artifacts/linux-packages.json
           jq -e '.version and (.packages | length >= 1)' artifacts/linux-packages.json
           jq '{version, pub_date, keys: (.packages | keys)}' artifacts/linux-packages.json
+          # Windows twin for the MSI assisted flow (same schema, msi key).
+          WIN_PACKAGES='{}'
+          add_win_package() { # $1=key $2=file
+            local key="$1" file="$2"
+            [ -n "$file" ] || { echo "skip $key: no artifact"; return 0; }
+            [ -f "$file.sig" ] || { echo "missing $file.sig"; exit 1; }
+            WIN_PACKAGES=$(jq --arg k "$key" --arg s "$(cat "$file.sig")" \
+              --arg u "$DL/$(basename "$file")" \
+              '. + {($k): {signature: $s, url: $u}}' <<<"$WIN_PACKAGES")
+          }
+          add_win_package "msi" "$(one 'artifacts/*.msi')"
+          [ "$(jq '. | length' <<<"$WIN_PACKAGES")" -ge 1 ] || { echo "no windows packages found"; exit 1; }
+          jq -n \
+            --arg version "$VER" --arg notes "$NOTES" --arg pub_date "$PUB_DATE" \
+            --argjson packages "$WIN_PACKAGES" \
+            '{version: $version, notes: $notes, pub_date: $pub_date,
+              packages: $packages}' \
+            > artifacts/windows-packages.json
+          jq -e '.version and (.packages | length >= 1)' artifacts/windows-packages.json
+          jq '{version, pub_date, keys: (.packages | keys)}' artifacts/windows-packages.json
       - name: publish
         uses: softprops/action-gh-release@v2
         with:
