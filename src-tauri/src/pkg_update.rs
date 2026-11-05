@@ -1,21 +1,19 @@
-//! Native Linux package updates (rpm/deb) via PackageKit.
+//! Native package updates: rpm/deb via PackageKit, MSI via assisted wizard.
 //!
-//! `tauri-plugin-updater` is AppImage-only on Linux, and system packages
-//! installed to `/usr` need root to replace — so for rpm/deb installs this
-//! module downloads the distro-native asset and installs it through
-//! `pkcon install-local` (PackageKit), which raises the session's native
-//! polkit password prompt. Same mechanism GNOME Software uses: check,
-//! download, password prompt, install, restart.
+//! `tauri-plugin-updater` is AppImage-only on Linux and NSIS-only on
+//! Windows. System installs need their own flows, sharing one security
+//! model: HTTPS fetch + MANDATORY minisign verification with the embedded
+//! release pubkey BEFORE the payload ever reaches the installer.
 //!
-//! Security model (mirrors the plugin): HTTPS fetch + MANDATORY minisign
-//! signature verification with the embedded release pubkey BEFORE the
-//! payload ever reaches the installer. URL allowlisting is defense in
-//! depth; the signature is the real gate — a tampered/redirected payload
-//! fails verification and is never installed.
+//! - rpm/deb in `/usr`: download the distro-native asset, install through
+//!   `pkcon install-local` (PackageKit raises the native polkit prompt).
+//! - MSI in Program Files: download + verify, then spawn `msiexec /i`
+//!   (full wizard UI) and exit the app so no files are locked.
 //!
-//! The manifest (`linux-packages.json`, published beside `latest.json`)
-//! is deliberately a separate file: the plugin's `latest.json` schema has
-//! fixed platform keys, and unknown keys could break its deserialization.
+//! The manifests (`linux-packages.json` / `windows-packages.json`,
+//! published beside `latest.json`) are deliberately separate files: the
+//! plugin's `latest.json` schema has fixed platform keys, and unknown
+//! keys could break its deserialization.
 
 use std::collections::HashMap;
 use std::io::Read;
@@ -27,6 +25,11 @@ use minisign_verify::{PublicKey, Signature};
 use serde::{Deserialize, Serialize};
 
 /// Published by `release.yml` beside `latest.json` on every tagged release.
+/// Per-OS file (same schema): the pkg flow only ever reads its own.
+#[cfg(target_os = "windows")]
+pub const PACKAGES_MANIFEST_URL: &str =
+    "https://github.com/shridhargsabat/vault-task/releases/latest/download/windows-packages.json";
+#[cfg(not(target_os = "windows"))]
 pub const PACKAGES_MANIFEST_URL: &str =
     "https://github.com/shridhargsabat/vault-task/releases/latest/download/linux-packages.json";
 
@@ -52,6 +55,10 @@ pub enum InstallKind {
     PluginManaged,
     /// rpm/deb in /usr — download + PackageKit install + relaunch.
     SystemPackage,
+    /// MSI in Program Files — verified download, then the MSI wizard.
+    /// (Constructed only on Windows; the fan-out lives in cfg'd code.)
+    #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+    MsiAssisted,
     /// Dev builds, portables, unknown distros — manual download link.
     Manual,
 }
@@ -119,12 +126,75 @@ pub struct SystemUpdate {
 // Detection (pure core + thin env wrapper, so unit tests pin the logic)
 // ---------------------------------------------------------------------------
 
+/// Which Windows installer owns this copy, read from the uninstall
+/// registry. MSI sets `WindowsInstaller=1` on its key; NSIS doesn't.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct WindowsInstallFacts {
+    pub msi: bool,
+    pub nsis: bool,
+}
+
+/// Pure Windows classifier: MSI → assisted flow, NSIS → plugin flow,
+/// neither (portable/dev) or both (ambiguous) → manual link.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+pub fn classify_windows_install(facts: &WindowsInstallFacts) -> InstallKind {
+    match (facts.msi, facts.nsis) {
+        (true, false) => InstallKind::MsiAssisted,
+        (false, true) => InstallKind::PluginManaged,
+        _ => InstallKind::Manual,
+    }
+}
+
+#[cfg(target_os = "windows")]
+/// Scan the uninstall registry for our product. Best-effort: unreadable
+/// hives/keys are skipped, never fatal.
+pub fn read_windows_install_facts() -> WindowsInstallFacts {
+    use winreg::RegKey;
+    use winreg::enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
+    let mut facts = WindowsInstallFacts::default();
+    let hives = [
+        (
+            HKEY_LOCAL_MACHINE,
+            "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall",
+        ),
+        (
+            HKEY_LOCAL_MACHINE,
+            "SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall",
+        ),
+        (
+            HKEY_CURRENT_USER,
+            "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall",
+        ),
+    ];
+    for (hive, path) in hives {
+        let Ok(key) = RegKey::predef(hive).open_subkey(path) else {
+            continue;
+        };
+        for name in key.enum_keys().flatten() {
+            let Ok(sub) = key.open_subkey(&name) else {
+                continue;
+            };
+            let display: String = sub.get_value("DisplayName").unwrap_or_default();
+            if display.eq_ignore_ascii_case("VaultTask") {
+                let msi_flag: u32 = sub.get_value("WindowsInstaller").unwrap_or(0);
+                if msi_flag == 1 {
+                    facts.msi = true;
+                } else {
+                    facts.nsis = true;
+                }
+            }
+        }
+    }
+    facts
+}
+
 /// Pure install-kind classifier over injected environment facts.
 pub fn classify_install(
     appimage_env: bool,
     exe_path: &str,
     os_release: Option<&str>,
     pkcon_present: bool,
+    windows: Option<&WindowsInstallFacts>,
 ) -> InstallInfo {
     if appimage_env {
         return InstallInfo {
@@ -135,16 +205,19 @@ pub fn classify_install(
     }
     #[cfg(target_os = "windows")]
     {
-        let _ = (exe_path, os_release);
+        let _ = (exe_path, os_release, pkcon_present);
+        let kind = windows
+            .map(classify_windows_install)
+            .unwrap_or(InstallKind::Manual);
         return InstallInfo {
-            kind: InstallKind::PluginManaged,
+            kind,
             family: None,
             packagekit: false,
         };
     }
     #[cfg(target_os = "macos")]
     {
-        let _ = (exe_path, os_release);
+        let _ = (exe_path, os_release, windows);
         return InstallInfo {
             kind: InstallKind::PluginManaged,
             family: None,
@@ -153,6 +226,7 @@ pub fn classify_install(
     }
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
+        let _ = windows;
         let under_usr = exe_path == "/usr" || exe_path.starts_with("/usr/");
         if !under_usr {
             return InstallInfo {
@@ -269,11 +343,16 @@ pub fn detect_install() -> InstallInfo {
         .map(|p| p.to_string_lossy().into_owned())
         .unwrap_or_default();
     let os_release = std::fs::read_to_string("/etc/os-release").ok();
+    #[cfg(target_os = "windows")]
+    let windows = Some(read_windows_install_facts());
+    #[cfg(not(target_os = "windows"))]
+    let windows: Option<WindowsInstallFacts> = None;
     classify_install(
         appimage,
         &exe,
         os_release.as_deref(),
         resolve_pkcon().is_some(),
+        windows.as_ref(),
     )
 }
 
@@ -338,10 +417,24 @@ pub fn verify_signature(payload: &[u8], signature_b64: &str) -> Result<(), Strin
         .map_err(|e| format!("signature verification failed: {e:?}"))
 }
 
+/// Resolve the manifest asset key + file extension for an install.
+/// SystemPackage reads the distro family; MsiAssisted is always `msi`.
+fn update_asset_spec(info: &InstallInfo) -> Result<(&'static str, &'static str), String> {
+    match info.kind {
+        InstallKind::SystemPackage => info
+            .family
+            .map(|f| (f.asset_key(), f.extension()))
+            .ok_or_else(|| "unsupported distro".to_string()),
+        InstallKind::MsiAssisted => Ok(("msi", "msi")),
+        _ => Err("not an updatable install".to_string()),
+    }
+}
+
 /// Pure check step: parse + select asset + compare versions.
 pub fn check_against(
     manifest_json: &str,
-    family: DistroFamily,
+    asset_key: &str,
+    extension: &str,
     current_version: &str,
 ) -> Result<Option<SystemUpdate>, String> {
     let manifest: PackageManifest =
@@ -349,13 +442,10 @@ pub fn check_against(
     if !is_newer(current_version, &manifest.version) {
         return Ok(None);
     }
-    let asset = manifest.packages.get(family.asset_key()).ok_or_else(|| {
-        format!(
-            "release {} has no {} package",
-            manifest.version,
-            family.asset_key()
-        )
-    })?;
+    let asset = manifest
+        .packages
+        .get(asset_key)
+        .ok_or_else(|| format!("release {} has no {asset_key} package", manifest.version))?;
     let file_name = asset
         .url
         .rsplit('/')
@@ -363,7 +453,7 @@ pub fn check_against(
         .filter(|n| !n.is_empty())
         .ok_or_else(|| "package URL malformed".to_string())?
         .to_string();
-    if !file_name.ends_with(&format!(".{}", family.extension())) {
+    if !file_name.ends_with(&format!(".{extension}")) {
         return Err("package URL has wrong extension".to_string());
     }
     Ok(Some(SystemUpdate {
@@ -378,15 +468,10 @@ pub fn check_against(
 /// Fetch the manifest and check for an update (thin wrapper).
 pub fn check_system_update() -> Result<Option<SystemUpdate>, String> {
     let info = detect_install();
-    if info.kind != InstallKind::SystemPackage {
-        return Err("not a system-package install".to_string());
-    }
-    let family = info
-        .family
-        .ok_or_else(|| "unsupported distro".to_string())?;
+    let (asset_key, extension) = update_asset_spec(&info)?;
     let bytes = fetch_capped(PACKAGES_MANIFEST_URL, MAX_MANIFEST_BYTES)?;
     let text = String::from_utf8(bytes).map_err(|_| "update manifest invalid".to_string())?;
-    check_against(&text, family, env!("CARGO_PKG_VERSION"))
+    check_against(&text, asset_key, extension, env!("CARGO_PKG_VERSION"))
 }
 
 /// Download + verify + stage a package into the temp dir. Returns the
@@ -401,14 +486,9 @@ pub fn download_system_update(
         return Err("package file name invalid".to_string());
     }
     let info = detect_install();
-    if info.kind != InstallKind::SystemPackage {
-        return Err("not a system-package install".to_string());
-    }
-    let family = info
-        .family
-        .ok_or_else(|| "unsupported distro".to_string())?;
-    if !file_name.ends_with(&format!(".{}", family.extension())) {
-        return Err("package extension does not match distro".to_string());
+    let (_, extension) = update_asset_spec(&info)?;
+    if !file_name.ends_with(&format!(".{extension}")) {
+        return Err("package extension does not match install".to_string());
     }
     let bytes = fetch_capped(url, MAX_PACKAGE_BYTES)?;
     verify_signature(&bytes, signature_b64)?;
@@ -421,8 +501,9 @@ pub fn download_system_update(
 // Install via PackageKit
 // ---------------------------------------------------------------------------
 
-/// Validate a staged path before it ever reaches pkcon: must be the exact
-/// temp-dir file we staged (prefix + rpm/deb extension, no traversal).
+/// Validate a staged path before it ever reaches an installer: must be
+/// the exact temp-dir file we staged (prefix + rpm/deb/msi extension,
+/// no traversal).
 pub fn validate_install_path(path: &str) -> Result<PathBuf, String> {
     let p = Path::new(path);
     let file_name = p
@@ -432,7 +513,8 @@ pub fn validate_install_path(path: &str) -> Result<PathBuf, String> {
     if !file_name.starts_with(STAGED_PREFIX) {
         return Err("not a staged update package".to_string());
     }
-    if !(file_name.ends_with(".rpm") || file_name.ends_with(".deb")) {
+    if !(file_name.ends_with(".rpm") || file_name.ends_with(".deb") || file_name.ends_with(".msi"))
+    {
         return Err("not a staged update package".to_string());
     }
     if p.parent() != Some(std::env::temp_dir().as_path()) {
@@ -546,6 +628,44 @@ pub fn install_system_package(path: &str) -> Result<(), String> {
 }
 
 // ---------------------------------------------------------------------------
+// MSI assisted install (Windows)
+// ---------------------------------------------------------------------------
+
+/// Spawn the MSI wizard for a staged package. Detached: returns once the
+/// installer process exists — the frontend exits the app next so no
+/// files are locked when the user clicks through (UAC prompt included).
+#[cfg(target_os = "windows")]
+pub fn launch_msi_installer(staged: &Path) -> Result<(), String> {
+    std::process::Command::new("msiexec")
+        .arg("/i")
+        .arg(staged)
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| format!("could not launch installer: {e}"))
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn launch_msi_installer(_staged: &Path) -> Result<(), String> {
+    Err("MSI install is Windows-only".to_string())
+}
+
+/// Validate + launch (thin wrapper for the IPC command). Only `.msi`
+/// files may ride the wizard path — rpm/deb go through PackageKit.
+/// The staged file is deliberately NOT deleted: msiexec reads it after
+/// we exit, and the temp dir is OS-cleaned.
+pub fn launch_system_installer(path: &str) -> Result<(), String> {
+    let staged = validate_install_path(path)?;
+    let is_msi = staged
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("msi"));
+    if !is_msi {
+        return Err("only MSI packages use the installer wizard".to_string());
+    }
+    launch_msi_installer(&staged)
+}
+
+// ---------------------------------------------------------------------------
 // IPC commands
 // ---------------------------------------------------------------------------
 
@@ -573,6 +693,11 @@ pub fn install_system_package_cmd(path: String) -> Result<(), String> {
     install_system_package(&path)
 }
 
+#[tauri::command(rename_all = "snake_case")]
+pub fn launch_system_installer_cmd(path: String) -> Result<(), String> {
+    launch_system_installer(&path)
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -583,7 +708,13 @@ mod tests {
 
     #[test]
     fn classify_appimage_uses_plugin_flow() {
-        let info = classify_install(true, "/tmp/.mount_Foo/usr/bin/vault-task", None, false);
+        let info = classify_install(
+            true,
+            "/tmp/.mount_Foo/usr/bin/vault-task",
+            None,
+            false,
+            None,
+        );
         assert_eq!(info.kind, InstallKind::PluginManaged);
         assert_eq!(info.family, None);
     }
@@ -592,7 +723,7 @@ mod tests {
     #[test]
     fn classify_usr_install_with_distro_is_system_package() {
         let os = "NAME=\"Fedora Linux\"\nID=fedora\nID_LIKE=\"rhel centos fedora\"\n";
-        let info = classify_install(false, "/usr/bin/vault-task", Some(os), true);
+        let info = classify_install(false, "/usr/bin/vault-task", Some(os), true, None);
         assert_eq!(info.kind, InstallKind::SystemPackage);
         assert_eq!(info.family, Some(DistroFamily::Rpm));
         assert!(info.packagekit);
@@ -606,7 +737,7 @@ mod tests {
             "/home/u/.local/bin/vault-task",
             "/opt/vault-task/vault-task",
         ] {
-            let info = classify_install(false, exe, None, true);
+            let info = classify_install(false, exe, None, true, None);
             assert_eq!(info.kind, InstallKind::Manual, "for {exe}");
         }
     }
@@ -615,7 +746,7 @@ mod tests {
     #[test]
     fn classify_unknown_distro_is_manual() {
         let os = "NAME=\"Arch Linux\"\nID=arch\n";
-        let info = classify_install(false, "/usr/bin/vault-task", Some(os), false);
+        let info = classify_install(false, "/usr/bin/vault-task", Some(os), false, None);
         assert_eq!(info.kind, InstallKind::Manual);
         assert_eq!(info.family, None);
     }
@@ -659,28 +790,82 @@ mod tests {
 
     #[test]
     fn check_selects_distro_asset_and_gates_version() {
-        let hit = check_against(MANIFEST_FIXTURE, DistroFamily::Rpm, "0.3.0")
+        let hit = check_against(MANIFEST_FIXTURE, "rpm", "rpm", "0.3.0")
             .unwrap()
             .unwrap();
         assert_eq!(hit.version, "0.4.0");
         assert!(hit.file_name.ends_with(".rpm"));
 
-        let hit = check_against(MANIFEST_FIXTURE, DistroFamily::Deb, "0.3.0")
+        let hit = check_against(MANIFEST_FIXTURE, "deb", "deb", "0.3.0")
             .unwrap()
             .unwrap();
         assert!(hit.file_name.ends_with(".deb"));
 
         // Same version → None, no asset needed.
         assert!(
-            check_against(MANIFEST_FIXTURE, DistroFamily::Rpm, "0.4.0")
+            check_against(MANIFEST_FIXTURE, "rpm", "rpm", "0.4.0")
                 .unwrap()
                 .is_none()
         );
 
         // Missing asset for the family → hard error, not a wrong file.
         let bare = r#"{"version":"0.4.0","notes":"","pub_date":"","packages":{}}"#;
-        assert!(check_against(bare, DistroFamily::Rpm, "0.3.0").is_err());
+        assert!(check_against(bare, "rpm", "rpm", "0.3.0").is_err());
         assert!(serde_json::from_str::<PackageManifest>("nope").is_err());
+    }
+
+    const MSI_MANIFEST_FIXTURE: &str = r#"{
+        "version": "0.5.0",
+        "notes": "MSI updater!",
+        "pub_date": "2026-11-05T00:00:00Z",
+        "packages": {
+            "msi": {"url": "https://github.com/shridhargsabat/vault-task/releases/download/v0.5.0/VaultTask_0.5.0_x64_en-US.msi", "signature": "SIG"}
+        }
+    }"#;
+
+    #[test]
+    fn windows_classifier_routes_msi_nsis_and_ambiguous() {
+        let msi = WindowsInstallFacts {
+            msi: true,
+            nsis: false,
+        };
+        assert_eq!(classify_windows_install(&msi), InstallKind::MsiAssisted);
+        let nsis = WindowsInstallFacts {
+            msi: false,
+            nsis: true,
+        };
+        assert_eq!(classify_windows_install(&nsis), InstallKind::PluginManaged);
+        // Portable/dev: neither flag → manual link, never a wrong flow.
+        assert_eq!(
+            classify_windows_install(&WindowsInstallFacts::default()),
+            InstallKind::Manual
+        );
+        // Both installed: ambiguous → manual link (safe over sorry).
+        let both = WindowsInstallFacts {
+            msi: true,
+            nsis: true,
+        };
+        assert_eq!(classify_windows_install(&both), InstallKind::Manual);
+    }
+
+    #[test]
+    fn check_selects_msi_asset_and_rejects_wrong_extension() {
+        let hit = check_against(MSI_MANIFEST_FIXTURE, "msi", "msi", "0.4.0")
+            .unwrap()
+            .unwrap();
+        assert_eq!(hit.version, "0.5.0");
+        assert!(hit.file_name.ends_with(".msi"));
+
+        // Same version → None.
+        assert!(
+            check_against(MSI_MANIFEST_FIXTURE, "msi", "msi", "0.5.0")
+                .unwrap()
+                .is_none()
+        );
+
+        // URL/extension mismatch → hard error.
+        assert!(check_against(MSI_MANIFEST_FIXTURE, "msi", "exe", "0.4.0").is_err());
+        assert!(check_against(MANIFEST_FIXTURE, "msi", "msi", "0.3.0").is_err());
     }
 
     /// Signed with the REAL release key (`tauri signer sign` over the exact
@@ -702,7 +887,7 @@ mod tests {
 
     #[test]
     fn install_path_validation_rejects_escapes() {
-        // Wrong prefix / extension / location all rejected before pkcon.
+        // Wrong prefix / extension / location all rejected before any installer.
         assert!(validate_install_path("/tmp/evil.rpm").is_err());
         assert!(validate_install_path("/tmp/vaulttask-update-x.AppImage").is_err());
         assert!(validate_install_path("/etc/vaulttask-update-x.rpm").is_err());
@@ -785,5 +970,33 @@ mod tests {
         assert!(err.contains("timed out"), "got: {err}");
         std::fs::remove_file(&staged).ok();
         std::fs::remove_file(&slow).ok();
+    }
+
+    #[test]
+    fn msi_staged_path_validates_and_non_msi_rejected_from_wizard() {
+        // Correctly staged .msi passes validation…
+        let staged = std::env::temp_dir().join(format!(
+            "vaulttask-update-msi-test-{}.msi",
+            std::process::id()
+        ));
+        std::fs::write(&staged, b"fake").unwrap();
+        assert!(validate_install_path(&staged.to_string_lossy()).is_ok());
+        // …but a staged .rpm may never ride the wizard path.
+        let rpm = std::env::temp_dir().join(format!(
+            "vaulttask-update-msi-test-{}.rpm",
+            std::process::id()
+        ));
+        std::fs::write(&rpm, b"fake").unwrap();
+        let err = launch_system_installer(&rpm.to_string_lossy()).unwrap_err();
+        assert!(err.contains("only MSI"), "got: {err}");
+        std::fs::remove_file(&staged).ok();
+        std::fs::remove_file(&rpm).ok();
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn msi_launch_is_windows_only_off_windows() {
+        let err = launch_msi_installer(Path::new("/tmp/x.msi")).unwrap_err();
+        assert!(err.contains("Windows-only"), "got: {err}");
     }
 }

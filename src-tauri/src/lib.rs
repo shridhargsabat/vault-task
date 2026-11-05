@@ -113,6 +113,7 @@ pub fn run() {
             pkg_update::check_system_update_cmd,
             pkg_update::download_system_update_cmd,
             pkg_update::install_system_package_cmd,
+            pkg_update::launch_system_installer_cmd,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

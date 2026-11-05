@@ -47,6 +47,9 @@ three package versions, builds `.msi` + `-setup.exe` on Windows,
   signatures, every payload is signature-verified before
   `pkcon install-local` runs; manual-download fallback when
   PackageKit is absent or the distro is unknown
+- MSI installs (NSIS is the plugin's only Windows target) self-update
+  assisted: same verify chain against `windows-packages.json`, then
+  the MSI wizard opens and the app exits first so files aren't locked
 
 ## Phase 9 — Scheduled reminders + privacy-safe notifications ✅
 
