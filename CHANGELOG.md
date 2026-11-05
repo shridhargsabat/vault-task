@@ -3,6 +3,18 @@
 All notable changes to VaultTask are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [Unreleased]
+
+### Changed
+
+- README download matrix lists all five installers with direct
+  download links; license badge matches the dual MIT/Apache-2.0 texts
+
+### Fixed
+
+- v0.4.3 release backfilled with the nsis/deb/appimage bundles that
+  the msi+rpm test track omitted (v0.4.4+ ships all five natively)
+
 ## [0.4.4] - 2026-11-05
 
 ### Changed
