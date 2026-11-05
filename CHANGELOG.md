@@ -3,6 +3,13 @@
 All notable changes to VaultTask are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [Unreleased]
+
+### Changed
+
+- Releases ship msi + rpm installers only (testing focus); manifests
+  tolerate any bundle subset so other formats can return later
+
 ## [0.4.1] - 2026-11-05
 
 ### Changed

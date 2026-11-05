@@ -33,12 +33,12 @@ jobs:
           [ "v$NPM_VER" = "$TAG" ] || { echo "tag does not match package.json version"; exit 1; }
 
   build-windows:
-    name: bundle msi,nsis on windows
+    name: bundle msi on windows
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - name: NSIS + WiX
-        run: choco install nsis wixtoolset -y
+      - name: WiX
+        run: choco install wixtoolset -y
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-node@v4
         with:
@@ -53,47 +53,11 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: npx tauri build --bundles msi,nsis
+        run: npx tauri build --bundles msi
       - uses: actions/upload-artifact@v4
         with:
           name: bundles-Windows
-          path: |
-            src-tauri/target/release/bundle/**/*.msi
-            src-tauri/target/release/bundle/**/*.exe
-            src-tauri/target/release/bundle/**/*.sig
-          if-no-files-found: error
-
-  build-ubuntu:
-    name: bundle deb,appimage on ubuntu
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
-      - name: system deps (Tauri WebKitGTK + bundling tools)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf file
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          cache: npm
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: src-tauri
-      - run: npm ci
-      - name: build bundles
-        shell: bash
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: npx tauri build --bundles deb,appimage
-      - uses: actions/upload-artifact@v4
-        with:
-          name: bundles-Ubuntu
-          path: |
-            src-tauri/target/release/bundle/**/*.deb
-            src-tauri/target/release/bundle/**/*.AppImage
-            src-tauri/target/release/bundle/**/*.sig
+          path: src-tauri/target/release/bundle/**/*.msi
           if-no-files-found: error
 
   build-fedora:
@@ -140,7 +104,7 @@ jobs:
 
   publish:
     name: publish release
-    needs: [preflight, build-windows, build-ubuntu, build-fedora]
+    needs: [preflight, build-windows, build-fedora]
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-24.04
     steps:
@@ -159,7 +123,7 @@ jobs:
         shell: bash
         run: |
           cd artifacts
-          sha256sum *.msi *.exe *.deb *.rpm *.AppImage > SHA256SUMS.txt
+          sha256sum *.msi *.rpm > SHA256SUMS.txt
           cat SHA256SUMS.txt
       # tauri-bundler signs updater targets (nsis/appimage/deb/msi) but NOT
       # the rpm — and the Fedora upload only ships *.rpm. Sign it here with
@@ -182,6 +146,9 @@ jobs:
       # self-contained), so the bundler emits only .sig sidecars — no
       # latest.json. Generate the manifest here (tauri-action style):
       # signatures are the raw .sig bytes, URLs are per-tag downloads.
+      # Lenient by design: each platform/package is included only when its
+      # artifact + .sig are present, so the release can ship any bundle
+      # subset (currently msi + rpm) without breaking the manifests.
       - name: generate updater manifest
         shell: bash
         env:
@@ -189,49 +156,53 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           set -u
-          mapfile -t EXES < <(ls artifacts/*-setup.exe)
-          mapfile -t APPS < <(ls artifacts/*.AppImage)
-          [ "${#EXES[@]}" -eq 1 ] || { echo "expected 1 setup.exe, found ${#EXES[@]}"; exit 1; }
-          [ "${#APPS[@]}" -eq 1 ] || { echo "expected 1 AppImage, found ${#APPS[@]}"; exit 1; }
-          [ -f "${EXES[0]}.sig" ] || { echo "missing ${EXES[0]}.sig"; exit 1; }
-          [ -f "${APPS[0]}.sig" ] || { echo "missing ${APPS[0]}.sig"; exit 1; }
-          # Native packages for the in-app PackageKit flow (rpm/deb can't
-          # ride latest.json — the plugin schema has fixed platform keys).
-          mapfile -t RPMS < <(ls artifacts/*.rpm)
-          mapfile -t DEBS < <(ls artifacts/*.deb)
-          [ "${#RPMS[@]}" -eq 1 ] || { echo "expected 1 rpm, found ${#RPMS[@]}"; exit 1; }
-          [ "${#DEBS[@]}" -eq 1 ] || { echo "expected 1 deb, found ${#DEBS[@]}"; exit 1; }
-          [ -f "${RPMS[0]}.sig" ] || { echo "missing ${RPMS[0]}.sig"; exit 1; }
-          [ -f "${DEBS[0]}.sig" ] || { echo "missing ${DEBS[0]}.sig"; exit 1; }
           VER="${TAG#v}"
           PUB_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-          NOTES=$(awk "/^## \[$VER\]/{flag=1;next}/^## \[/{flag=0}flag" CHANGELOG.md | head -c 4000)
+          NOTES=$(awk "/^## \\[$VER\\]/{flag=1;next}/^## \\[/{flag=0}flag" CHANGELOG.md | head -c 4000)
           [ -n "$NOTES" ] || NOTES="VaultTask $VER — see GitHub Releases for details."
+          DL="https://github.com/$REPO/releases/download/$TAG"
+          # Collect at most one match per glob; empty when absent.
+          one() { ls $1 2>/dev/null | head -n 1; }
+          PLATFORMS='{}'
+          add_platform() { # $1=platform key $2=artifact file
+            local key="$1" file="$2"
+            [ -n "$file" ] || { echo "skip $key: no artifact"; return 0; }
+            [ -f "$file.sig" ] || { echo "missing $file.sig"; exit 1; }
+            PLATFORMS=$(jq --arg k "$key" --arg s "$(cat "$file.sig")" \
+              --arg u "$DL/$(basename "$file")" \
+              '. + {($k): {signature: $s, url: $u}}' <<<"$PLATFORMS")
+          }
+          add_platform "windows-x86_64" "$(one 'artifacts/*-setup.exe')"
+          add_platform "linux-x86_64" "$(one 'artifacts/*.AppImage')"
           jq -n \
             --arg version "$VER" --arg notes "$NOTES" --arg pub_date "$PUB_DATE" \
-            --arg win_sig "$(cat "${EXES[0]}.sig")" \
-            --arg win_url "https://github.com/$REPO/releases/download/$TAG/$(basename "${EXES[0]}")" \
-            --arg linux_sig "$(cat "${APPS[0]}.sig")" \
-            --arg linux_url "https://github.com/$REPO/releases/download/$TAG/$(basename "${APPS[0]}")" \
+            --argjson platforms "$PLATFORMS" \
             '{version: $version, notes: $notes, pub_date: $pub_date,
-              platforms: {
-                "windows-x86_64": {signature: $win_sig, url: $win_url},
-                "linux-x86_64": {signature: $linux_sig, url: $linux_url}}}' \
+              platforms: $platforms}' \
             > artifacts/latest.json
-          jq -e '.version and (.platforms | length == 2)' artifacts/latest.json
+          jq -e '.version and (.platforms | type == "object")' artifacts/latest.json
           cat artifacts/latest.json
+          # Native packages for the in-app PackageKit flow (rpm/deb can't
+          # ride latest.json — the plugin schema has fixed platform keys).
+          PACKAGES='{}'
+          add_package() { # $1=key $2=file
+            local key="$1" file="$2"
+            [ -n "$file" ] || { echo "skip $key: no artifact"; return 0; }
+            [ -f "$file.sig" ] || { echo "missing $file.sig"; exit 1; }
+            PACKAGES=$(jq --arg k "$key" --arg s "$(cat "$file.sig")" \
+              --arg u "$DL/$(basename "$file")" \
+              '. + {($k): {signature: $s, url: $u}}' <<<"$PACKAGES")
+          }
+          add_package "rpm" "$(one 'artifacts/*.rpm')"
+          add_package "deb" "$(one 'artifacts/*.deb')"
+          [ "$(jq '. | length' <<<"$PACKAGES")" -ge 1 ] || { echo "no native packages found"; exit 1; }
           jq -n \
             --arg version "$VER" --arg notes "$NOTES" --arg pub_date "$PUB_DATE" \
-            --arg rpm_sig "$(cat "${RPMS[0]}.sig")" \
-            --arg rpm_url "https://github.com/$REPO/releases/download/$TAG/$(basename "${RPMS[0]}")" \
-            --arg deb_sig "$(cat "${DEBS[0]}.sig")" \
-            --arg deb_url "https://github.com/$REPO/releases/download/$TAG/$(basename "${DEBS[0]}")" \
+            --argjson packages "$PACKAGES" \
             '{version: $version, notes: $notes, pub_date: $pub_date,
-              packages: {
-                "rpm": {signature: $rpm_sig, url: $rpm_url},
-                "deb": {signature: $deb_sig, url: $deb_url}}}' \
+              packages: $packages}' \
             > artifacts/linux-packages.json
-          jq -e '.version and (.packages | length == 2)' artifacts/linux-packages.json
+          jq -e '.version and (.packages | length >= 1)' artifacts/linux-packages.json
           jq '{version, pub_date, keys: (.packages | keys)}' artifacts/linux-packages.json
       - name: publish
         uses: softprops/action-gh-release@v2
