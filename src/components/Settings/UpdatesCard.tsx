@@ -40,6 +40,18 @@ interface PkgUpdateState extends SystemUpdate {
 
 const RELEASES_URL = "https://github.com/shridhargsabat/vault-task/releases";
 
+/** Map backend download errors to friendly copy (backend strings are user-safe). */
+function friendlyDownloadError(e: unknown): string {
+  if (typeof e !== "string")
+    return "Download or signature check failed. Please try again.";
+  const lower = e.toLowerCase();
+  if (lower.includes("timed out") || lower.includes("timeout"))
+    return "Download timed out — the connection may be slow. Please try again.";
+  if (lower.includes("signature") || lower.includes("verification"))
+    return "Signature check failed — the download may be corrupt. Please try again.";
+  return e.length <= 160 ? e : "Download failed. Please try again.";
+}
+
 /** Updates & Version card: plugin (NSIS/AppImage), PackageKit (rpm/deb), or MSI assist. */
 export function UpdatesCard() {
   const nonce = useVaultStore((s) => s.updaterCheckNonce);
@@ -136,9 +148,9 @@ export function UpdatesCard() {
         setStagedName(`vaulttask-update-${pkg.fileName}`);
         setProgress(1);
         setPhase("downloaded");
-      } catch {
+      } catch (e) {
         setPhase("error");
-        setMessage("Download or signature check failed. Please try again.");
+        setMessage(friendlyDownloadError(e));
       }
       return;
     }
