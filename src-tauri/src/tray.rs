@@ -232,7 +232,14 @@ pub fn build_tray_menu<R: Runtime>(app: &AppHandle<R>, locked: bool) -> tauri::R
         None::<&str>,
     )?;
     let quit = MenuItem::with_id(app, "tray-quit", "Quit", true, None::<&str>)?;
-    Menu::with_items(app, &[&open, &maximize, &lock, &quit])
+    let check_updates = MenuItem::with_id(
+        app,
+        "tray-check-updates",
+        "Check for Updates...",
+        true,
+        None::<&str>,
+    )?;
+    Menu::with_items(app, &[&open, &maximize, &lock, &check_updates, &quit])
 }
 
 /// Build the persistent tray icon with its context menu.
@@ -265,6 +272,12 @@ pub fn create_tray<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
                     }
                 }
                 "tray-lock" => lock_session_and_emit(app),
+                "tray-check-updates" => {
+                    if let Some(w) = app.get_webview_window("main") {
+                        let _ = show_popover(app, &w);
+                    }
+                    let _ = app.emit("updater://check", ());
+                }
                 "tray-quit" => app.exit(0),
                 _ => {}
             }

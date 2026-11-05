@@ -3,6 +3,7 @@ import { Check, Settings2, X } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useVaultStore } from "../../store/useVaultStore";
 import type { BackupResult } from "../../types/models";
+import { UpdatesCard } from "./UpdatesCard";
 
 const TIMEOUT_PRESETS: { seconds: number; label: string }[] = [
   { seconds: 30, label: "30s" },
@@ -196,6 +197,10 @@ export function SecuritySettingsModal() {
         </header>
 
         <section>
+          <UpdatesCard />
+        </section>
+
+        <section className="border-t border-neutral-800 pt-3">
           <p className="mb-1.5 text-xs font-medium text-neutral-300">
             Lock after inactivity
           </p>

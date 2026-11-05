@@ -1,6 +1,6 @@
 [package]
 name = "vault-task"
-version = "0.2.0"
+version = "0.3.0"
 description = "VaultTask — encrypted tray task manager with Markdown notes"
 license = "MIT OR Apache-2.0"
 authors = ["you"]
@@ -40,6 +40,8 @@ sha2 = "0.10"
 tauri-plugin-dialog = "2"
 base64 = "0.22"
 tauri-plugin-notification = "2"
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
 
 [profile.release]
 codegen-units = 1

@@ -51,6 +51,21 @@ function App() {
     return () => unlisten?.();
   }, []);
 
+  // Tray "Check for Updates..." opens Settings and kicks off a check.
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    listen("updater://check", () => {
+      useVaultStore.getState().requestUpdateCheck();
+    })
+      .then((fn) => {
+        unlisten = fn;
+      })
+      .catch(() => {
+        /* not running under Tauri (browser preview) */
+      });
+    return () => unlisten?.();
+  }, []);
+
   return (
     <div className="flex h-full w-full flex-col overflow-hidden">
       <CustomTitlebar />
