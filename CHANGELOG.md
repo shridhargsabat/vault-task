@@ -5,6 +5,14 @@ All notable changes to VaultTask are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- In-app package downloads timed out on slow links: the 20s HTTP
+  budget covered the whole body read, killing any 6MB+ fetch under
+  ~300KB/s. Package downloads now get 600s; manifests keep 20s.
+  Download failures also surface the real backend reason (timeout vs
+  signature vs network) instead of one generic message
+
 ### Added
 
 - MSI installs self-update in-app (assisted): the updater detects MSI

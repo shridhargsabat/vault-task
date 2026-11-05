@@ -40,6 +40,10 @@ const UPDATE_PUBKEY_B64: &str = "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyB
 const MAX_MANIFEST_BYTES: u64 = 64 * 1024;
 const MAX_PACKAGE_BYTES: u64 = 128 * 1024 * 1024;
 const HTTP_TIMEOUT: Duration = Duration::from_secs(20);
+/// Package downloads are megabytes, not kilobytes: the global budget
+/// covers the whole body read, so a slow link needs headroom (6MB at
+/// 65KB/s is ~100s; the 85MB AppImage needs more).
+const PACKAGE_HTTP_TIMEOUT: Duration = Duration::from_secs(600);
 const PKCON_TIMEOUT: Duration = Duration::from_secs(600);
 const STAGED_PREFIX: &str = "vaulttask-update-";
 
@@ -360,9 +364,9 @@ pub fn detect_install() -> InstallInfo {
 // Fetch + verify
 // ---------------------------------------------------------------------------
 
-fn http_agent() -> ureq::Agent {
+fn http_agent_with_timeout(timeout: Duration) -> ureq::Agent {
     ureq::Agent::config_builder()
-        .timeout_global(Some(HTTP_TIMEOUT))
+        .timeout_global(Some(timeout))
         .build()
         .into()
 }
@@ -370,10 +374,18 @@ fn http_agent() -> ureq::Agent {
 /// Fetch a URL to memory with a hard byte cap (defense against hostile
 /// length lies — the reader is truncated, never unbounded).
 fn fetch_capped(url: &str, max_bytes: u64) -> Result<Vec<u8>, String> {
+    fetch_capped_with_timeout(url, max_bytes, HTTP_TIMEOUT)
+}
+
+fn fetch_capped_with_timeout(
+    url: &str,
+    max_bytes: u64,
+    timeout: Duration,
+) -> Result<Vec<u8>, String> {
     if !url.starts_with("https://github.com/") {
         return Err("refusing non-GitHub update URL".to_string());
     }
-    let res = http_agent()
+    let res = http_agent_with_timeout(timeout)
         .get(url)
         .call()
         .map_err(|e| format!("download failed: {e}"))?;
@@ -490,7 +502,7 @@ pub fn download_system_update(
     if !file_name.ends_with(&format!(".{extension}")) {
         return Err("package extension does not match install".to_string());
     }
-    let bytes = fetch_capped(url, MAX_PACKAGE_BYTES)?;
+    let bytes = fetch_capped_with_timeout(url, MAX_PACKAGE_BYTES, PACKAGE_HTTP_TIMEOUT)?;
     verify_signature(&bytes, signature_b64)?;
     let staged = std::env::temp_dir().join(format!("{STAGED_PREFIX}{file_name}"));
     std::fs::write(&staged, &bytes).map_err(|e| format!("could not stage package: {e}"))?;
