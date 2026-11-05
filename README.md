@@ -23,6 +23,21 @@ three package versions, builds `.msi` + `-setup.exe` on Windows,
 `rpm -qpR` dependency check), then publishes all five installers plus
 `SHA256SUMS.txt` to a GitHub Release.
 
+## Phase 10 — In-app updater (tauri-plugin-updater + process) ✅
+
+- Signed self-updates from `releases/latest/download/latest.json`
+  (minisign keypair; private key in the `TAURI_SIGNING_PRIVATE_KEY`
+  repo secret, pubkey in `tauri.conf.json`); Windows NSIS +
+  Linux AppImage artifacts, per-platform manifests merged at publish
+- Updates & Version card + tray "Check for Updates..." entry;
+  `cargo test` 38 green · clippy 0 · typecheck 0 · deny clean
+- Headless E2E: v0.3.0 badge renders, missing-manifest check fails
+  gracefully with a retryable message (full install flow unlocks once
+  v0.3.0 publishes `latest.json`)
+- E2E note: the app needs a session bus to boot headless
+  (`dbus-daemon --session --fork --print-address`, exported as
+  `DBUS_SESSION_BUS_ADDRESS`) — without one it idles pre-setup
+
 ## Phase 9 — Scheduled reminders + privacy-safe notifications ✅
 
 - `tauri-plugin-notification` + 15s `scheduler.rs` tick: fires native

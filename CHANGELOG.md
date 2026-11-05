@@ -3,7 +3,19 @@
 All notable changes to VaultTask are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
-## [Unreleased]
+## [0.3.0] - 2026-11-05
+
+### Added — Phase 10: In-app updater (tauri-plugin-updater + process)
+
+- Self-update from GitHub Releases on Windows (NSIS) and Linux
+  (AppImage): signed `latest.json` manifest, minisign verification,
+  `TAURI_SIGNING_PRIVATE_KEY` in GitHub Secrets
+- Updates & Version settings card (live version badge, Check for
+  Updates, progress bar, release-notes preview, Restart to Apply)
+  plus a "Check for Updates..." tray menu item; offline/missing
+  manifest fails gracefully with a retryable message
+- `release.yml` signs bundles, merges per-platform manifests into one
+  `latest.json`, and injects CHANGELOG notes before publishing
 
 ### Added — Phase 9: Scheduled reminders + privacy-safe notifications
 

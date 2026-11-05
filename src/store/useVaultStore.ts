@@ -41,6 +41,9 @@ interface VaultState {
   setPinnedState: (p: boolean) => void;
   isSettingsOpen: boolean;
   setSettingsOpen: (open: boolean) => void;
+  /** Bumped by the tray "Check for Updates..." event; the Updates card checks on change. */
+  updaterCheckNonce: number;
+  requestUpdateCheck: () => void;
   updateSecuritySettings: (
     autoLockSeconds: number,
     lockOnTrayHide: boolean,
@@ -88,6 +91,7 @@ export const useVaultStore = create<VaultState>((set, get) => ({
   windowMode: "popover",
   isPinned: false,
   isSettingsOpen: false,
+  updaterCheckNonce: 0,
   autostartEnabled: null,
   loading: false,
   error: null,
@@ -376,4 +380,6 @@ export const useVaultStore = create<VaultState>((set, get) => ({
   setWindowMode: (m) => set({ windowMode: m }),
   setPinnedState: (p) => set({ isPinned: p }),
   setSettingsOpen: (open) => set({ isSettingsOpen: open }),
+  requestUpdateCheck: () =>
+    set((s) => ({ isSettingsOpen: true, updaterCheckNonce: s.updaterCheckNonce + 1 })),
 }));

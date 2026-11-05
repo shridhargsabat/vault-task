@@ -31,6 +31,9 @@ allow = [
     "Unicode-3.0",
     "MPL-2.0",
     "OpenSSL",
+    # Permissive data license for the Mozilla CA bundle (webpki-root-certs,
+    # via rustls/updater dependency chain).
+    "CDLA-Permissive-2.0",
 ]
 confidence-threshold = 0.8
 
