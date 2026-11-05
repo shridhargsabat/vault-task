@@ -191,6 +191,9 @@ pub fn hide_main_window<R: Runtime>(app: &AppHandle<R>) {
 
 /// Sync tray tooltip + menu with the current lock state. Best-effort:
 /// silently no-ops when no tray host exists (headless tests, bare GNOME).
+/// Skips redundant pushes: rebuilding the StatusNotifier/dbusmenu object
+/// every watchdog tick makes GNOME's AppIndicator popup visibly flash
+/// while open, so the menu is only replaced on actual state changes.
 pub fn refresh_tray_state<R: Runtime>(app: &AppHandle<R>) {
     let locked = app
         .state::<AppState>()
@@ -198,6 +201,14 @@ pub fn refresh_tray_state<R: Runtime>(app: &AppHandle<R>) {
         .lock()
         .map(|s| s.is_locked())
         .unwrap_or(true);
+    if !tray_state_changed(
+        &mut last_tray_locked()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()),
+        locked,
+    ) {
+        return;
+    }
     if let Some(tray) = app.tray_by_id("main-tray") {
         let _ = tray.set_tooltip(Some(if locked {
             "VaultTask (Locked)"
@@ -208,6 +219,23 @@ pub fn refresh_tray_state<R: Runtime>(app: &AppHandle<R>) {
             let _ = tray.set_menu(Some(menu));
         }
     }
+}
+
+/// Last lock state pushed to the tray. Process-wide: there is exactly one
+/// `main-tray`, and the single-instance guard means one app per session.
+fn last_tray_locked() -> &'static std::sync::Mutex<Option<bool>> {
+    static LAST: std::sync::Mutex<Option<bool>> = std::sync::Mutex::new(None);
+    &LAST
+}
+
+/// Pure change detector (unit-testable): records `locked`, returning true
+/// only when it differs from the previously recorded state.
+fn tray_state_changed(last: &mut Option<bool>, locked: bool) -> bool {
+    if *last == Some(locked) {
+        return false;
+    }
+    *last = Some(locked);
+    true
 }
 
 // ---------------------------------------------------------------------------
@@ -352,5 +380,19 @@ mod tests {
         assert_eq!(s.key, Code::Space);
         assert!(s.mods.contains(Modifiers::CONTROL));
         assert!(s.mods.contains(Modifiers::SHIFT));
+    }
+
+    #[test]
+    fn tray_sync_pushes_only_on_state_change() {
+        // First sync always pushes (cold cache); repeats are skipped so the
+        // StatusNotifier menu isn't rebuilt every watchdog tick (GNOME flash).
+        let mut last = None;
+        assert!(tray_state_changed(&mut last, true));
+        assert!(!tray_state_changed(&mut last, true));
+        assert!(!tray_state_changed(&mut last, true));
+        // Transitions push exactly once, then settle again.
+        assert!(tray_state_changed(&mut last, false));
+        assert!(!tray_state_changed(&mut last, false));
+        assert!(tray_state_changed(&mut last, true));
     }
 }

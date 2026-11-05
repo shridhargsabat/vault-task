@@ -3,6 +3,14 @@
 All notable changes to VaultTask are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [Unreleased]
+
+### Fixed
+
+- Tray menu no longer flashes on Fedora GNOME: `refresh_tray_state`
+  now pushes tooltip/menu updates only when the lock state changed
+  instead of rebuilding the StatusNotifier menu every watchdog tick
+
 ## [0.3.0] - 2026-11-05
 
 ### Added — Phase 10: In-app updater (tauri-plugin-updater + process)
