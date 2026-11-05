@@ -30,6 +30,9 @@ All notable changes to VaultTask are documented here. The format follows
   via the uninstall registry, verifies the new package against
   `windows-packages.json`, then opens the MSI wizard and exits so no
   files are locked (the Tauri plugin is NSIS-only on Windows)
+- 15 package-updater tests (registry classify, MSI manifest select,
+  wizard gating); Windows side proven via GNU cross-compile +
+  Windows CI, on-device wizard run still pending
 
 ### Changed
 
@@ -51,6 +54,10 @@ All notable changes to VaultTask are documented here. The format follows
 - Tray icon too small on dark top bars: dedicated full-bleed tray asset
   (`icons/tray-icon.png`, oversized glyph) embedded in the binary instead
   of the padded app icon, with fallback to the default window icon
+- OneDrive flyout deletes the tray menu (net −12 lines): left-click
+  always toggles, Quit + Check for Updates move in-app (titlebar ⋯
+  menu, Settings row); before/after icon sheets + maximize/detach
+  verified headless
 
 ## [0.4.0] - 2026-11-05
 
@@ -65,12 +72,17 @@ All notable changes to VaultTask are documented here. The format follows
   it via PackageKit (`pkcon install-local`, native password prompt),
   then restarts — no terminal needed; falls back to manual
   instructions when PackageKit is missing
+- 11 package-updater unit tests (mock `pkcon`, signed-vector verify);
+  headless E2E: Updates card branches screenshot-verified (real
+  `pkcon` + polkit prompt needs on-device proving)
 
 ### Fixed
 
 - Tray menu no longer flashes on Fedora GNOME: `refresh_tray_state`
   now pushes tooltip/menu updates only when the lock state changed
   instead of rebuilding the StatusNotifier menu every watchdog tick
+  (root-caused via 40-frame pixel-diff of a screen recording: the open
+  popup re-rendered on every ~1s tick)
 
 ## [0.3.0] - 2026-11-05
 
@@ -85,6 +97,11 @@ All notable changes to VaultTask are documented here. The format follows
   manifest fails gracefully with a retryable message
 - `release.yml` signs bundles, merges per-platform manifests into one
   `latest.json`, and injects CHANGELOG notes before publishing
+- 38 tests green; headless E2E: version badge renders, missing-manifest
+  check fails gracefully with a retryable message (booting headless
+  needs a session bus via `dbus-daemon --session`); the v2 bundler
+  emits only `.sig` sidecars, so `latest.json` is generated in the
+  publish job and verified live (URLs 200, minisign envelopes valid)
 
 ### Added — Phase 9: Scheduled reminders + privacy-safe notifications
 
@@ -101,6 +118,9 @@ All notable changes to VaultTask are documented here. The format follows
 - Reminder picker in the task pane (presets + calendar + HH:MM),
   `@remind(15m|1h|tomorrow|17:30)` quick-add syntax, and a "Show task
   titles in notifications when unlocked" Settings toggle
+- 38 tests green; headless E2E with a D-Bus notification catcher:
+  generic/titled/locked payload bytes, fired flags, picker, and
+  toggle all verified live
 
 ## [0.2.0] - 2026-11-05
 
@@ -112,6 +132,9 @@ All notable changes to VaultTask are documented here. The format follows
 - Unlocked-session Markdown export: one `.md` per task with YAML
   frontmatter (status, priority, due date, tags) plus subtasks and notes
 - Backup & Data section in Security settings with native file dialogs
+- 25 tests green; headless E2E: modal renders all three actions,
+  export/import/markdown proven through the real IPC command layer
+  with real files
 
 ### Added — Phase 7: OS keyring quick-unlock
 
@@ -123,6 +146,9 @@ All notable changes to VaultTask are documented here. The format follows
 - Settings toggle + Quick Unlock button (Ctrl+U) on the lock screen;
   graceful fallback to PIN with a clear message when the keyring
   daemon is locked or unavailable
+- 32 tests green (mock-credential roundtrips, pre-keyring migration);
+  headless E2E: enable without a daemon fails gracefully (flag stays
+  0, no panic), flag-on shows the button, Ctrl+U falls back to PIN
 
 ### Changed — Phase 8: CI/CD to spec
 
@@ -141,6 +167,9 @@ All notable changes to VaultTask are documented here. The format follows
   startup with `STATUS_ENTRYPOINT_NOT_FOUND`. `build.rs` now
   delay-loads `comctl32.dll` (stable plain link-args), deferring
   import resolution to first call
+- Mock IPC harness uses the platform-correct origin URL
+  (`http://tauri.localhost` on Windows, `tauri://localhost` elsewhere);
+  32/32 tests green on Windows CI
 
 ## [0.1.0] - 2026-11-04
 
@@ -158,6 +187,9 @@ Windows 11, Ubuntu 24.04+, and Fedora 41+.
 - Persistent tray icon (Open/Maximize/Lock/Quit), OS-aware popover
   positioning, Ctrl+Shift+Space summon, close-to-tray + focus-loss hide
 - 420x620 frameless popover ↔ maximized workspace toggle
+- 12 unit tests (anchor math, shortcut combo); headless E2E
+  (Xvfb + openbox + xdotool): popover renders, maximize → 1280x800,
+  restore → 420x620, hide-to-tray keeps the process alive
 
 ### Added — Phase 3: List + side pane UI
 
@@ -167,6 +199,9 @@ Windows 11, Ubuntu 24.04+, and Fedora 41+.
   note editor with 300ms autosave (sanitized preview)
 - `snake_case` IPC contract with mock-runtime tests pinning the
   frontend's exact JSON shapes
+- 14 tests green; headless E2E: 5 tasks via quick-add, drawer
+  open/close, note autosave persisted (36B ciphertext), maximized
+  3-pane + docked detail, restart persistence
 
 ### Added — Phase 4: Auto-lock engine + lock screens
 
@@ -175,9 +210,18 @@ Windows 11, Ubuntu 24.04+, and Fedora 41+.
 - DOM activity tracker (2s-throttled heartbeats), Ctrl/Cmd+L instant lock
 - Setup/unlock views (wrong-PIN shake), security settings modal
   (30s–1h presets, hide-toggle, transactional passphrase rekey)
+- 19 tests green (watchdog ticks, rekey IPC flow); headless E2E: Ctrl+L,
+  wrong-PIN banner, 30s watchdog lock, fake ScreenSaver-service D-Bus
+  lock, passphrase change (old dead / new works), lock-on-tray-hide
 
 ### Added — Phase 5: Packaging + autostart + single-instance
 
 - Launch-on-startup toggle (Windows Run key / Linux autostart entry,
   boots `--minimized` to tray); second launch focuses the existing window
 - Installers: `.msi` + NSIS `.exe`, `.deb`, `.rpm`, `.AppImage`
+  (deb: `libwebkit2gtk-4.1-0` + `libayatana-appindicator3-1`; rpm:
+  `webkit2gtk4.1` + `libappindicator-gtk3`, recommends the GNOME
+  AppIndicator shell extension)
+- 19 tests green; headless E2E: 2nd instance exits after D-Bus
+  handoff, `--minimized` boots unmapped to tray, Startup toggle
+  creates/removes the autostart entry

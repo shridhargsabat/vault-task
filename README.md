@@ -1,254 +1,137 @@
-# VaultTask — Encrypted Tray Task Manager + Markdown Notes
+<div align="center">
 
-<img src="assets/logo.svg" alt="VaultTask logo" width="96" />
+<img src="assets/logo.svg" alt="VaultTask logo" width="120" />
 
-Tauri v2 (Rust + React 18 + TypeScript + Tailwind + Zustand) desktop app for
-Windows 11, Ubuntu 24.04+, and Fedora 41+.
+# VaultTask
 
-## Screenshots
+**The encrypted task manager that lives in your tray — Rust core, OS webview, zero cloud.**
+
+[![CI](https://github.com/shridhargsabat/vault-task/actions/workflows/ci.yml/badge.svg)](https://github.com/shridhargsabat/vault-task/actions/workflows/ci.yml)
+[![Latest release](https://img.shields.io/github/v/release/shridhargsabat/vault-task)](https://github.com/shridhargsabat/vault-task/releases/latest)
+[![License](https://img.shields.io/github/license/shridhargsabat/vault-task)](LICENSE)
+[![Tauri](https://img.shields.io/badge/Tauri-v2-blue)](https://v2.tauri.app)
+[![Rust](https://img.shields.io/badge/Rust-stable-orange)](https://www.rust-lang.org)
+[![Platforms](https://img.shields.io/badge/Win_11_%7C_Ubuntu_24.04%2B_%7C_Fedora_41%2B-lightgrey)](https://github.com/shridhargsabat/vault-task/releases/latest)
+
+</div>
 
 ![Demo: quick-add, drawer, maximize, Markdown preview, lock & unlock](docs/screenshots/vaulttask-demo.gif)
 
-| Tray popover + drawer | Maximized workspace | Lock screen |
+| Tray flyout + drawer | Maximized workspace | Lock screen |
 |---|---|---|
 | ![Tray flyout with side-pane drawer](docs/screenshots/tray-popover.png) | ![3-column workspace](docs/screenshots/hero-workspace.png) | ![Lock screen with keyring quick-unlock](docs/screenshots/lock-screen.png) |
 
-![Demo: 30s idle auto-locks, PIN unlocks](docs/screenshots/auto-lock-demo.gif)
+![Demo: idle auto-locks, PIN unlocks](docs/screenshots/auto-lock-demo.gif)
 
-## Release
+## Why VaultTask?
 
-CI (`ci.yml`) runs on every push to `main` and every PR targeting `main`:
-Rust fmt + clippy + tests, typecheck + Vite build, a Windows test job,
-and `cargo deny`.
+| | VaultTask | Typical Electron task app |
+|---|---|---|
+| Idle footprint | ≈170 MB, one native process (measured, Linux release build) | 300–500 MB+ across helper processes |
+| Installer download | ~5–6 MB (`.msi` / `.rpm`) | 80–150 MB (bundled Chromium) |
+| Rendering | OS webview (WebView2 / WebKitGTK) | Ships its own Chromium per app |
+| Encryption | Argon2id + AES-256-GCM, local only | Often cloud-synced plaintext |
+| Idle behavior | Auto-locks, zeroizes keys from RAM | Stays unlocked indefinitely |
+| Updates | In-app, signature-verified | Store-only or manual downloads |
 
-To cut a release, bump the version in `src-tauri/Cargo.toml`,
-`src-tauri/tauri.conf.json`, and `package.json` (all three must match),
-then tag and push:
+Hit `Ctrl+Shift+Space` anywhere: a 420×620 flyout drops from your tray
+with quick-add (`!high @today @remind(1h)`), filters, and encrypted
+Markdown notes. Need room? One click expands to a full 3-column
+workspace. Walk away and the 1-second Rust watchdog locks the vault and
+wipes keys from memory — D-Bus session lock included on Linux.
+
+## Download & install
+
+Grab the latest release for your OS (verify with `SHA256SUMS.txt` —
+every asset is minisign-signed and the app re-verifies before installing):
+
+| OS | Format | Install |
+|---|---|---|
+| Windows 11 | `.msi` ✅ | Download → double-click (assisted in-app updates) |
+| Windows 11 | `-setup.exe` (NSIS) ⏸️ | Full updater support; returns after the msi+rpm test track — meanwhile [v0.4.1](https://github.com/shridhargsabat/vault-task/releases/tag/v0.4.1) |
+| Ubuntu 24.04+ | `.deb` / `.AppImage` ⏸️ | Paused during the msi+rpm test track — meanwhile [v0.4.1](https://github.com/shridhargsabat/vault-task/releases/tag/v0.4.1) |
+| Fedora 41+ | `.rpm` ✅ | `sudo dnf install -y ./VaultTask-*.rpm` (self-updates via PackageKit) |
 
 ```bash
-git tag v0.2.0 && git push origin v0.2.0
+# Verify any download (Linux):
+sha256sum -c SHA256SUMS.txt --ignore-missing
 ```
 
-Pushing a `v*` tag runs `release.yml`: it verifies the tag matches all
-three package versions, builds `.msi` + `-setup.exe` on Windows,
-`.deb` + `.AppImage` on Ubuntu 24.04, and `.rpm` for Fedora (with an
-`rpm -qpR` dependency check), then publishes all five installers plus
-`SHA256SUMS.txt` to a GitHub Release.
+**In-app updates, per install kind:** NSIS/AppImage via the signed
+`latest.json` plugin flow · rpm/deb via PackageKit (`pkcon
+install-local`, native password prompt, no terminal) · MSI assisted
+(verified download, then the MSI wizard). Package downloads survive slow
+links (10-minute budget) and every byte is minisign-verified before
+anything executes. GNOME users: enable
+`gnome-extensions enable appindicatorsupport@rgcjonas.gmail.com`, then
+log out/in once.
 
-## Phase 10 — In-app updater (tauri-plugin-updater + process) ✅
+## Shortcuts & quick-add
 
-- Signed self-updates from `releases/latest/download/latest.json`
-  (minisign keypair; private key in the `TAURI_SIGNING_PRIVATE_KEY`
-  repo secret, pubkey in `tauri.conf.json`); Windows NSIS +
-  Linux AppImage artifacts, per-platform manifests merged at publish
-- Updates & Version card + tray "Check for Updates..." entry;
-  `cargo test` 38 green · clippy 0 · typecheck 0 · deny clean
-- Headless E2E: v0.3.0 badge renders, missing-manifest check fails
-  gracefully with a retryable message (full install flow unlocks once
-  v0.3.0 publishes `latest.json`)
-- E2E note: the app needs a session bus to boot headless
-  (`dbus-daemon --session --fork --print-address`, exported as
-  `DBUS_SESSION_BUS_ADDRESS`) — without one it idles pre-setup
-- Native packages (rpm/deb) self-update via PackageKit, not the
-  plugin (AppImage-only upstream): `pkg_update.rs` detects the
-  install kind + distro family, `linux-packages.json` (published
-  beside `latest.json`; the rpm is signed in CI since the bundler
-  only signs updater targets) carries asset URLs + minisign
-  signatures, every payload is signature-verified before
-  `pkcon install-local` runs; manual-download fallback when
-  PackageKit is absent or the distro is unknown
-- MSI installs (NSIS is the plugin's only Windows target) self-update
-  assisted: same verify chain against `windows-packages.json`, then
-  the MSI wizard opens and the app exits first so files aren't locked
+| Shortcut | Action |
+|---|---|
+| `Ctrl+Shift+Space` | Summon / hide the tray flyout from anywhere |
+| `Ctrl+L` | Lock the vault instantly |
+| `Ctrl+U` | Quick-unlock via OS keyring (falls back to PIN) |
+| `Escape` | Close dialog / drawer |
 
-## Phase 9 — Scheduled reminders + privacy-safe notifications ✅
+| Quick-add token | Effect |
+|---|---|
+| `!urgent` `!high` `!med` `!low` (or `!4`–`!1`) | Set priority |
+| `@today` `@tomorrow` `@2026-12-01` | Set due date |
+| `@remind(15m)` `@remind(1h)` `@remind(tomorrow)` `@remind(17:30)` | Schedule a native OS reminder |
+| `#tag` | Tag the task (filterable) |
 
-- `tauri-plugin-notification` + 15s `scheduler.rs` tick: fires native
-  OS toasts for due reminders, marks `reminder_fired` only after
-  successful dispatch (failures retry; no duplicates, no activity
-  recorded so ticks never delay auto-lock)
-- Locked vaults (or hidden previews) get a generic "VaultTask
-  Reminder" — titles decrypt in memory only when unlocked with
-  previews allowed; `cargo test` 38 green · clippy 0 · typecheck 0
-- Reminder picker (presets + calendar + HH:MM), `@remind(15m|1h|…)`
-  quick-add, Settings privacy toggle; schema migrated + backup-carried
-- Headless E2E with a D-Bus notification catcher: verified generic /
-  titled / locked payload bytes, fired flags, picker, and toggle live
+Example: `Ship v0.5 !urgent @today @remind(1h) #release`
 
-## Phase 7 — OS keyring quick-unlock ✅
+Reminders fire as native OS toasts — but a locked vault (or hidden
+previews) only ever shows a generic *"VaultTask Reminder"*. Titles
+decrypt in memory solely when unlocked with previews allowed.
 
-- `keyring` crate (Windows Credential Manager / Secret Service via
-  D-Bus, pure-Rust bus crypto, vendored libdbus — no new system deps);
-  derived key stored base64 under `com.vaulttask.desktop` / `master_key`
-- `enable_keyring_unlock` + `unlock_with_keyring` IPC; `keyring_enabled`
-  flag in `vault_meta` with ALTER TABLE migration for v0.1 databases
-  (proven on a real upgraded DB) and carried through `.vault` backups
-- Settings toggle + Quick Unlock button (Ctrl+U) on the lock screen;
-  `cargo test` 32 green · clippy 0 · typecheck 0 · deny clean
-- Headless E2E: enable without a daemon fails gracefully (clear banner,
-  flag stays 0, no panic); flag-on shows the button; Ctrl+U with no
-  daemon falls back to PIN with a clear message; PIN unlock unaffected
+## Security architecture
 
-## Phase 6 — Encrypted backup + Markdown export ✅
+- **At rest:** every sensitive field is AES-256-GCM ciphertext in a local
+  SQLite store; keys derive from your passphrase via Argon2id
+  (`m=65536, t=3, p=4`). No account, no cloud, no telemetry.
+- **In memory:** the `MasterKey` zeroizes on lock; idle timeout (30s–1h),
+  session lock, and hide-to-tray all funnel through one lock path.
+- **Quick-unlock (optional):** derived key in Windows Credential Manager /
+  Secret Service, verified against the vault verifier before use.
+- **Backups:** signed `.vault` bundles (SHA-256 integrity, atomic
+  password-verified restore) + unlocked-only Markdown export.
+- **Supply chain:** strict branch protection, 4-gate CI (fmt/clippy/
+  tests/typecheck/Windows/deny), signed manifests, `SHA256SUMS.txt`.
 
-- Signed `.vault` bundles (salt, verifier, all encrypted rows, SHA-256
-  checksum — never any plaintext); restore verifies checksum + backup
-  password, then atomically replaces the local vault and locks
-- `export_decrypted_markdown` (unlocked only): one `.md` per task with
-  YAML frontmatter + subtask checkboxes + note body
-- Backup & Data section in Security settings (native file dialogs);
-  `cargo test` 25 green · typecheck 0 · `vite build` 0 · deny clean
-- Headless E2E: modal renders all three actions; export/import/markdown
-  proven through the real IPC command layer with real files
+Full build history lives in [CHANGELOG.md](CHANGELOG.md) — every phase,
+every E2E proof, every benchmark.
 
-## Phase 5 — Packaging + autostart + single-instance ✅
-
-- `tauri-plugin-autostart` (Windows `HKCU\...\Run` + Linux
-  `~/.config/autostart/VaultTask.desktop` with `--minimized` so login boots
-  straight to the tray) with a Startup toggle in settings;
-  `tauri-plugin-single-instance` (second launch shows + focuses the
-  existing window, then exits)
-- Bundle targets: `msi`, `nsis`, `deb`, `rpm`, `appimage`; deb depends on
-  `libwebkit2gtk-4.1-0` + `libayatana-appindicator3-1`; rpm depends on
-  `webkit2gtk4.1` + `libappindicator-gtk3` and recommends
-  `gnome-shell-extension-appindicator`
-- `cargo test` 19 green · typecheck 0 · `vite build` 0 · release `.deb`
-  built clean
-- Headless E2E: 2nd instance exits (D-Bus name owned), `--minimized`
-  boots unmapped, autostart toggle creates/removes the `.desktop` entry
-
-### Build & dependencies per OS
+## Building from source
 
 Prereqs everywhere: Rust stable via rustup + Node 20+.
 
-**Windows 11 / 10** (PowerShell):
-- `winget install Rustlang.Rustup OpenJS.NodeJS`
-- Visual Studio Build Tools with the C++ workload (rustup prompts if missing)
-- WebView2: preinstalled on Win11 / Win10 1803+
-- MSI: WiX Toolset 3.11+ (wixtoolset.org) · NSIS `.exe`:
-  `winget install NSIS.NSIS`
-- `npm run tauri build -- --bundles msi nsis`
-
-**Ubuntu 24.04+**:
-- `sudo apt install libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libssl-dev build-essential curl wget file`
-- `npm run tauri build -- --bundles deb appimage`
-- Running the AppImage needs FUSE at runtime (`sudo apt install libfuse2`)
-
-**Fedora 41+**:
-- `sudo dnf install webkit2gtk4.1-devel libappindicator-gtk3-devel librsvg2-devel openssl-devel @development-tools`
-- `npm run tauri build -- --bundles rpm appimage`
-- GNOME tray icons need the AppIndicator shell extension (the `.rpm`
-  recommends `gnome-shell-extension-appindicator`): after install run
-  `gnome-extensions enable appindicatorsupport@rgcjonas.gmail.com`
-  and log out/in once (Wayland only loads it at login)
-
-## Phase 4 — Auto-lock engine + lock screens ✅
-
-- `watchdog.rs`: 1s Tokio loop (idle > `auto_lock_seconds` → zeroize +
-  `vault://locked` + tray sync); Linux D-Bus `ScreenSaver.ActiveChanged`
-  listener (graceful); all hide paths route via `hide_main_window`
-  (honors `lock_on_tray_hide`); tray tooltip/menu reflect lock state
-- `change_vault_password` IPC + transactional `rekey_vault` (decrypt-all
-  before write; fresh salt/nonces; session key swap)
-- `useActivityTracker` (2s-throttled heartbeats, Ctrl/Cmd+L),
-  `SetupVaultView` (confirm field), `UnlockVaultView` (shake + banner),
-  `SecuritySettingsModal` (30s–1h presets, hide-toggle, rekey)
-- `cargo test` 19 green (watchdog ticks, rekey IPC flow) · typecheck 0
-- Headless E2E: Ctrl+L, wrong-PIN banner, 30s watchdog lock, fake
-  ScreenSaver-service D-Bus lock, passphrase change + old-dead/new-works,
-  lock-on-tray-hide (X button → unmapped + session lock)
-
-## Phase 3 — List + side pane UI ✅
-
-- `FilterRail` (pills / 240px sidebar), `QuickAddBar` (`!high` `@today`
-  shortcuts with live hints), `TaskListView` (search, `#tag`, badges,
-  subtask progress, note/pin indicators)
-- `TaskDetailPane` (320px drawer / docked): status, `PrioritySelect`,
-  `DueDatePicker` (custom calendar popover), tags, `SubtaskList`,
-  `NoteEditor` (toolbar, write/preview, 300ms debounced autosave
-  flushed on task switch)
-- **Fix:** all commands now `rename_all = "snake_case"` — Tauri v2
-  defaults IPC arg keys to camelCase and silently drops mismatched
-  `Option` args (due dates/notes never arrived). Pinned by
-  `src-tauri/src/ipc_contract.rs` mock-runtime IPC test (fails pre-fix).
-- `cargo test` 14 green · `typecheck` 0 · `vite build` 0
-- Headless E2E: setup/unlock, 5 tasks via quick-add, drawer open/close,
-  note autosave persisted (36B ciphertext), maximized 3-pane + docked
-  detail, restart persistence
-
-## Phase 2 — Tray + dual-mode window manager ✅
-
-- `src-tauri/src/tray.rs` — platform-split tray: Linux carries a minimal
-  static menu (Show/Hide, Check for Updates, Quit) because the GNOME
-  AppIndicator extension only shows items with a real dbusmenu path
-  (`/NO_DBUSMENU` never reaches its `ready` gate) and libappindicator
-  never delivers click events; Windows/macOS stay menu-less so
-  left-click toggles the flyout OneDrive-style (Quit/updates also live
-  in the app UI),
-  OS-aware popover positioner (`TrayCenter` Windows, `TopRight` GNOME,
-  `BottomRight` KDE) + 12px work-area fallback, Ctrl+Shift+Space summon
-  (Wayland note: the compositor owns placement, so tray-adjacent
-  anchoring is best-effort there — the flyout opens focused regardless)
-- Close-to-tray + focus-loss auto-hide (unless pinned) via `on_window_event`
-- IPC: `set_window_mode`, `toggle_maximize_mode`, `hide_to_tray`, `set_pinned`
-- `src/components/Titlebar/CustomTitlebar.tsx` + `src/hooks/useWindowMode.ts`
-- `cargo test` — 12 green (incl. anchor-math + shortcut-combo tests)
-- Headless E2E (Xvfb + openbox + xdotool): popover 420x620 renders,
-  maximize → 1280x800, restore → 420x620, hide-to-tray → process persists
-
-## Phase 1 — Encrypted SQLite backend + auth state machine ✅
-
-- `src-tauri/src/crypto.rs` — Argon2id KDF + AES-256-GCM, zeroized `MasterKey`
-- `src-tauri/src/db.rs` — `vault_task.db` in OS app-data dir, `vault_meta` + `tasks` tables
-- `src-tauri/src/state.rs` — `AppState(Mutex<VaultSession>)`
-- `src-tauri/src/commands.rs` — IPC: `get_vault_status`, `setup_vault`,
-  `unlock_vault`, `lock_vault`, `update_security_settings`, `list_tasks`,
-  `create_task`, `update_task`, `delete_task` (+ `record_activity_heartbeat`)
-- `cargo test` — 8 tests green (KDF, roundtrips, wrong-PIN rejection, encrypted CRUD)
-
-## Prerequisites
-
-**Ubuntu 24.04+:**
-
 ```bash
-sudo apt install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libssl-dev build-essential curl
+# Ubuntu 24.04+
+sudo apt install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev \
+  librsvg2-dev libssl-dev build-essential curl
+# Fedora 41+
+sudo dnf install -y webkit2gtk4.1-devel libappindicator-gtk3-devel \
+  librsvg2-devel openssl-devel
+# Windows 11: WebView2 (pre-installed) + WiX 3.11+ for MSI / NSIS for .exe
 ```
-
-**Fedora 41+:**
-
-```bash
-sudo dnf install -y webkit2gtk4.1-devel libappindicator-gtk3-devel librsvg2-devel openssl-devel
-```
-
-**Windows 11:** WebView2 evergreen runtime (pre-installed) + Rust + Node 20+.
-
-## Develop
 
 ```bash
 npm install
-npm run tauri dev
+npm run tauri dev        # develop
+npm run typecheck && npm run build && cd src-tauri && cargo test  # verify
+npm run tauri build -- --bundles msi nsis   # Windows
+npm run tauri build -- --bundles deb appimage  # Ubuntu (AppImage needs libfuse2)
+npm run tauri build -- --bundles rpm appimage  # Fedora
 ```
 
-## Verify
+Headless testing needs a session bus:
+`dbus-daemon --session --fork --print-address` exported as
+`DBUS_SESSION_BUS_ADDRESS`.
 
-```bash
-npm run typecheck   # tsc --noEmit
-npm run build       # tsc + vite build
-cd src-tauri && cargo test
-```
+---
 
-## Project layout
-
-```text
-vault-task/
-├── src-tauri/src/
-│   ├── crypto.rs    # Argon2id + AES-256-GCM + MasterKey
-│   ├── db.rs        # SQLite migrations + encrypted CRUD
-│   ├── state.rs     # VaultSession + AppState
-│   ├── commands.rs  # Tauri IPC commands
-│   └── lib.rs       # App builder + state wiring
-└── src/
-    ├── types/models.ts
-    ├── store/useVaultStore.ts
-    └── App.tsx      # Phase 1 minimal vault UI (full UI lands in Phase 3/4)
-```
+MIT OR Apache-2.0 · [Releases](https://github.com/shridhargsabat/vault-task/releases) · [Changelog](CHANGELOG.md)
