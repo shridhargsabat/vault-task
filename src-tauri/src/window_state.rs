@@ -29,7 +29,7 @@ pub struct SavedPosition {
 pub fn load_window_position(path: &Path) -> Option<SavedPosition> {
     let bytes = std::fs::read(path).ok()?;
     let pos: SavedPosition = serde_json::from_slice(&bytes).ok()?;
-    if pos.x.abs() > MAX_COORD_ABS || pos.y.abs() > MAX_COORD_ABS {
+    if pos.x.unsigned_abs() > MAX_COORD_ABS as u32 || pos.y.unsigned_abs() > MAX_COORD_ABS as u32 {
         return None;
     }
     Some(pos)
@@ -54,9 +54,9 @@ pub fn should_save_position(now_ms: u128, last_ms: u128) -> bool {
 /// True when `(x, y)` falls inside any work area. Each monitor is
 /// `(work_x, work_y, work_w, work_h)` in physical pixels.
 pub fn position_on_any_monitor(x: i32, y: i32, monitors: &[(i32, i32, i32, i32)]) -> bool {
-    monitors
-        .iter()
-        .any(|&(mx, my, mw, mh)| x >= mx && y >= my && x < mx + mw && y < mh + my)
+    monitors.iter().any(|&(mx, my, mw, mh)| {
+        (mx..mx.saturating_add(mw)).contains(&x) && (my..my.saturating_add(mh)).contains(&y)
+    })
 }
 
 #[cfg(test)]
@@ -101,6 +101,14 @@ mod tests {
     fn load_absurd_coordinates_returns_none() {
         let p = tmp_file("absurd");
         std::fs::write(&p, b"{\"x\": 99999999, \"y\": 0}").unwrap();
+        assert_eq!(load_window_position(&p), None);
+        std::fs::remove_file(&p).unwrap();
+    }
+
+    #[test]
+    fn load_i32_min_returns_none() {
+        let p = tmp_file("i32min");
+        std::fs::write(&p, b"{\"x\": -2147483648, \"y\": 0}").unwrap();
         assert_eq!(load_window_position(&p), None);
         std::fs::remove_file(&p).unwrap();
     }
