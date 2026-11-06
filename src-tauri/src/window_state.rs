@@ -184,3 +184,58 @@ mod tests {
         assert!(matches!(action, PositionAction::Anchor));
     }
 }
+
+// ---------------------------------------------------------------------------
+// Thin Tauri glue (integration-verified via manual run + E2E; kept
+// branch-free so there is nothing to unit-test that the core above
+// does not already cover).
+// ---------------------------------------------------------------------------
+
+use tauri::{AppHandle, Manager, PhysicalPosition, Runtime, WebviewWindow};
+
+/// `window_state.json` next to the vault DB (same `app_data_dir`).
+pub fn state_file_path<R: Runtime>(app: &AppHandle<R>) -> std::path::PathBuf {
+    app.path()
+        .app_data_dir()
+        .unwrap_or_else(|_| std::path::PathBuf::from("."))
+        .join(WINDOW_STATE_FILE)
+}
+
+/// Best-effort snapshot of the main window's current position.
+/// Never panics, never surfaces errors (a failed save must not break
+/// hiding or moving the window).
+pub fn save_current_position<R: Runtime>(app: &AppHandle<R>) {
+    let Some(window) = app.get_webview_window("main") else {
+        return;
+    };
+    let Ok(pos) = window.outer_position() else {
+        return;
+    };
+    let saved = SavedPosition { x: pos.x, y: pos.y };
+    if save_window_position(&state_file_path(app), &saved).is_ok() {
+        eprintln!("[vault-task] saved window position {}x{}", saved.x, saved.y);
+    }
+}
+
+/// Restore the saved spot when valid + on-screen, else tray-anchor.
+/// Silent no-op on Wayland (compositor ignores client positioning).
+pub fn restore_or_anchor<R: Runtime>(app: &AppHandle<R>, window: &WebviewWindow<R>) {
+    let saved = load_window_position(&state_file_path(app));
+    let monitors: Vec<(i32, i32, i32, i32)> = window
+        .available_monitors()
+        .unwrap_or_default()
+        .iter()
+        .map(|m| {
+            let p = m.work_area().position;
+            let s = m.work_area().size;
+            (p.x, p.y, s.width as i32, s.height as i32)
+        })
+        .collect();
+    match decide_position_action(saved, &monitors) {
+        PositionAction::Restore(p) => {
+            let _ = window.set_position(tauri::Position::Physical(PhysicalPosition::new(p.x, p.y)));
+            eprintln!("[vault-task] restored window position {}x{}", p.x, p.y);
+        }
+        PositionAction::Anchor => crate::tray::position_popover(window),
+    }
+}
