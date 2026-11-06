@@ -6,6 +6,10 @@ mod scheduler;
 pub(crate) mod state;
 mod tray;
 mod watchdog;
+// Task 3 ships the pure core only; Tauri glue (later tasks) will call
+// these from the crate root. Drop this allow once the glue lands.
+#[allow(dead_code)]
+mod window_state;
 
 #[cfg(test)]
 mod ipc_contract;
