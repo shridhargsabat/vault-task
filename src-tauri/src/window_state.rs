@@ -108,9 +108,14 @@ pub fn save_current_position<R: Runtime>(app: &AppHandle<R>) {
     let Some(window) = app.get_webview_window("main") else {
         return;
     };
-    let Ok(pos) = window.outer_position() else {
+    let Ok(pos) = window.inner_position() else {
         return;
     };
+    if pos.x == 0 && pos.y == 0 {
+        // Wayland hides position (always (0,0)); on X11 (0,0) sits under
+        // the top panel. Either way there is nothing worth persisting.
+        return;
+    }
     let saved = SavedPosition { x: pos.x, y: pos.y };
     if save_window_position(&state_file_path(app), &saved).is_ok() {
         eprintln!("[vault-task] saved window position {}x{}", saved.x, saved.y);
