@@ -108,6 +108,10 @@ pub fn save_current_position<R: Runtime>(app: &AppHandle<R>) {
     let Some(window) = app.get_webview_window("main") else {
         return;
     };
+    // INVARIANT: frameless window so inner == outer visually; outer_position()
+    // includes compositor shadow extents (measured 74px on GNOME/XWayland)
+    // while set_position targets the client surface — do NOT change back to
+    // outer_position.
     let Ok(pos) = window.inner_position() else {
         return;
     };
@@ -139,7 +143,10 @@ pub fn restore_or_anchor<R: Runtime>(app: &AppHandle<R>, window: &WebviewWindow<
     match decide_position_action(saved, &monitors) {
         PositionAction::Restore(p) => {
             let _ = window.set_position(tauri::Position::Physical(PhysicalPosition::new(p.x, p.y)));
-            eprintln!("[vault-task] restored window position {}x{}", p.x, p.y);
+            eprintln!(
+                "[vault-task] requested window position restore to {}x{} (compositor may ignore; no-op on Wayland)",
+                p.x, p.y
+            );
         }
         PositionAction::Anchor => crate::tray::position_popover(window),
     }

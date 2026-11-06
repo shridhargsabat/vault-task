@@ -176,7 +176,15 @@ pub fn lock_session_and_emit<R: Runtime>(app: &AppHandle<R>) {
 /// Hide the main window; when `lock_on_tray_hide` is set, lock the vault too.
 /// All hide paths (titlebar X, close-to-tray, focus loss, tray toggle) route here.
 pub fn hide_main_window<R: Runtime>(app: &AppHandle<R>) {
-    crate::window_state::save_current_position(app);
+    let track = app
+        .state::<AppState>()
+        .session
+        .lock()
+        .map(|s| crate::window_state::should_track_move(&s.window_mode))
+        .unwrap_or(false);
+    if track {
+        crate::window_state::save_current_position(app);
+    }
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.hide();
     }
