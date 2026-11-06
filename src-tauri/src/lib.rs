@@ -6,7 +6,6 @@ mod scheduler;
 pub(crate) mod state;
 mod tray;
 mod watchdog;
-#[allow(dead_code)] // temporary: callers land in T6/T7 wiring; T7 drops this
 mod window_state;
 
 #[cfg(test)]
@@ -51,6 +50,10 @@ pub fn run() {
             // appindicator extension simply runs without a tray host).
             if let Err(e) = tray::create_tray(app.handle()) {
                 eprintln!("[vault-task] tray unavailable, continuing without it: {e}");
+            }
+            // Restore last popover position (or tray-anchor on first run / stale save).
+            if let Some(window) = app.get_webview_window("main") {
+                crate::window_state::restore_or_anchor(app.handle(), &window);
             }
             // Autostart launches (--minimized) boot straight to the tray.
             if std::env::args().any(|a| a == "--minimized")

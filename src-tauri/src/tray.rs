@@ -125,7 +125,7 @@ pub fn show_popover<R: Runtime>(
     window
         .set_always_on_top(true)
         .map_err(|e| format!("set always_on_top: {e}"))?;
-    position_popover(window);
+    crate::window_state::restore_or_anchor(app, window);
     window.show().map_err(|e| format!("show window: {e}"))?;
     let _ = window.set_focus();
     record_mode(app, "popover");
@@ -176,6 +176,7 @@ pub fn lock_session_and_emit<R: Runtime>(app: &AppHandle<R>) {
 /// Hide the main window; when `lock_on_tray_hide` is set, lock the vault too.
 /// All hide paths (titlebar X, close-to-tray, focus loss, tray toggle) route here.
 pub fn hide_main_window<R: Runtime>(app: &AppHandle<R>) {
+    crate::window_state::save_current_position(app);
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.hide();
     }
