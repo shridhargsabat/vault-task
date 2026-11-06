@@ -59,6 +59,26 @@ pub fn position_on_any_monitor(x: i32, y: i32, monitors: &[(i32, i32, i32, i32)]
     })
 }
 
+/// What `setup()` / `show_popover()` should do with the window position.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PositionAction {
+    /// Move to the saved spot (valid + on a visible monitor).
+    Restore(SavedPosition),
+    /// No usable save: use the tray anchor (`position_popover`).
+    Anchor,
+}
+
+/// Pure restore-or-anchor decision shared by startup restore and summon.
+pub fn decide_position_action(
+    saved: Option<SavedPosition>,
+    monitors: &[(i32, i32, i32, i32)],
+) -> PositionAction {
+    match saved {
+        Some(p) if position_on_any_monitor(p.x, p.y, monitors) => PositionAction::Restore(p),
+        _ => PositionAction::Anchor,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -129,5 +149,38 @@ mod tests {
         assert!(!position_on_any_monitor(-50, 100, &mons));
         let dual = [(0, 0, 1920, 1080), (1920, 0, 1920, 1080)];
         assert!(position_on_any_monitor(2000, 500, &dual));
+    }
+
+    #[test]
+    fn no_saved_position_anchors() {
+        assert!(matches!(
+            decide_position_action(None, &[(0, 0, 1920, 1080)]),
+            PositionAction::Anchor
+        ));
+    }
+
+    #[test]
+    fn onscreen_saved_restores() {
+        let action = decide_position_action(
+            Some(SavedPosition { x: 100, y: 100 }),
+            &[(0, 0, 1920, 1080)],
+        );
+        assert!(matches!(action, PositionAction::Restore(p) if p.x == 100 && p.y == 100));
+    }
+
+    #[test]
+    fn offscreen_saved_falls_back_to_anchor() {
+        // Unplugged second monitor: stale (2500, 100) must not strand the window.
+        let action = decide_position_action(
+            Some(SavedPosition { x: 2500, y: 100 }),
+            &[(0, 0, 1920, 1080)],
+        );
+        assert!(matches!(action, PositionAction::Anchor));
+    }
+
+    #[test]
+    fn no_monitors_anchors() {
+        let action = decide_position_action(Some(SavedPosition { x: 100, y: 100 }), &[]);
+        assert!(matches!(action, PositionAction::Anchor));
     }
 }
