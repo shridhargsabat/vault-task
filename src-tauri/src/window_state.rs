@@ -51,6 +51,12 @@ pub fn should_save_position(now_ms: u128, last_ms: u128) -> bool {
     now_ms - last_ms >= SAVE_THROTTLE_MS
 }
 
+/// Only popover drags are remembered: maximized geometry is OS-driven
+/// and must never overwrite the saved popover spot.
+pub fn should_track_move(window_mode: &str) -> bool {
+    window_mode == "popover"
+}
+
 /// True when `(x, y)` falls inside any work area. Each monitor is
 /// `(work_x, work_y, work_w, work_h)` in physical pixels.
 pub fn position_on_any_monitor(x: i32, y: i32, monitors: &[(i32, i32, i32, i32)]) -> bool {
@@ -237,5 +243,12 @@ mod tests {
     fn no_monitors_anchors() {
         let action = decide_position_action(Some(SavedPosition { x: 100, y: 100 }), &[]);
         assert!(matches!(action, PositionAction::Anchor));
+    }
+
+    #[test]
+    fn should_track_move_rejects_maximized() {
+        assert!(should_track_move("popover"));
+        assert!(!should_track_move("maximized"));
+        assert!(!should_track_move(""));
     }
 }

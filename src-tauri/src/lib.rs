@@ -88,6 +88,28 @@ pub fn run() {
                     tray::hide_main_window(window.app_handle());
                 }
             }
+            // Remember popover drag position (throttled): restores on next launch.
+            WindowEvent::Moved(_) if window.label() == "main" => {
+                let app = window.app_handle();
+                let track = app
+                    .state::<AppState>()
+                    .session
+                    .lock()
+                    .map(|s| {
+                        crate::window_state::should_track_move(&s.window_mode)
+                            && crate::window_state::should_save_position(
+                                s.last_pos_save.elapsed().as_millis(),
+                                0,
+                            )
+                    })
+                    .unwrap_or(false);
+                if track {
+                    crate::window_state::save_current_position(app);
+                    if let Ok(mut s) = app.state::<AppState>().session.lock() {
+                        s.last_pos_save = std::time::Instant::now();
+                    }
+                }
+            }
             _ => {}
         })
         .invoke_handler(tauri::generate_handler![

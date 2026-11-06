@@ -20,6 +20,8 @@ pub struct VaultSession {
     pub window_mode: String,
     /// When true, the popover does not auto-hide on focus loss.
     pub is_pinned: bool,
+    /// Last drag-move position save (throttle clock; never serialized).
+    pub last_pos_save: Instant,
 }
 
 impl Default for VaultSession {
@@ -31,6 +33,7 @@ impl Default for VaultSession {
             lock_on_tray_hide: false,
             window_mode: "popover".to_string(),
             is_pinned: false,
+            last_pos_save: Instant::now(),
         }
     }
 }
