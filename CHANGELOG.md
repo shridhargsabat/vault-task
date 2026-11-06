@@ -14,6 +14,13 @@ All notable changes to VaultTask are documented here. The format follows
 
 - v0.4.3 release backfilled with the nsis/deb/appimage bundles that
   the msi+rpm test track omitted (v0.4.4+ ships all five natively)
+- Popover window now reopens at its last dragged position instead of
+  the screen center / tray corner (position persists across
+  hide, summon, and restart; stale off-screen saves fall back to the
+  tray anchor). Note: native Wayland compositors ignore client
+  window positioning, so restore is fully effective on Windows, X11,
+  and XWayland (`GDK_BACKEND=x11`), and a graceful no-op on native
+  Wayland
 
 ## [0.4.4] - 2026-11-05
 
