@@ -6,6 +6,7 @@ mod scheduler;
 pub(crate) mod state;
 mod tray;
 mod watchdog;
+mod window_state;
 
 #[cfg(test)]
 mod ipc_contract;
@@ -50,6 +51,10 @@ pub fn run() {
             if let Err(e) = tray::create_tray(app.handle()) {
                 eprintln!("[vault-task] tray unavailable, continuing without it: {e}");
             }
+            // Restore last popover position (or tray-anchor on first run / stale save).
+            if let Some(window) = app.get_webview_window("main") {
+                crate::window_state::restore_or_anchor(app.handle(), &window);
+            }
             // Autostart launches (--minimized) boot straight to the tray.
             if std::env::args().any(|a| a == "--minimized")
                 && let Some(window) = app.get_webview_window("main")
@@ -84,6 +89,28 @@ pub fn run() {
                     .unwrap_or(true);
                 if !keep_open {
                     tray::hide_main_window(window.app_handle());
+                }
+            }
+            // Remember popover drag position (throttled): restores on next launch.
+            WindowEvent::Moved(_) if window.label() == "main" => {
+                let app = window.app_handle();
+                let track = app
+                    .state::<AppState>()
+                    .session
+                    .lock()
+                    .map(|s| {
+                        crate::window_state::should_track_move(&s.window_mode)
+                            && crate::window_state::should_save_position(
+                                s.last_pos_save.elapsed().as_millis(),
+                                0,
+                            )
+                    })
+                    .unwrap_or(false);
+                if track {
+                    crate::window_state::save_current_position(app);
+                    if let Ok(mut s) = app.state::<AppState>().session.lock() {
+                        s.last_pos_save = std::time::Instant::now();
+                    }
                 }
             }
             _ => {}
