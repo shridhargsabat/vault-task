@@ -5,6 +5,8 @@ All notable changes to VaultTask are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.5] - 2026-11-16
+
 ### Changed
 
 - README download matrix lists all five installers with direct
